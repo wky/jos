@@ -63,10 +63,10 @@ sched_halt(void)
 	// environments in the system, then drop into the kernel monitor.
 	/*
 	for (i = 0; i < NENV; i++) {
-			if ((envs[i].env_status == ENV_RUNNABLE ||
-				 envs[i].env_status == ENV_RUNNING ||
-				 envs[i].env_status == ENV_DYING))
-					break;
+		if ((envs[i].env_status == ENV_RUNNABLE ||
+		     envs[i].env_status == ENV_RUNNING ||
+		     envs[i].env_status == ENV_DYING))
+			break;
 	}
 	if (i == NENV) {
 			cprintf("No runnable environments in the system!\n");
