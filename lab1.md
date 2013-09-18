@@ -233,16 +233,16 @@ Reading AT&T x86 asm syntax - done
 The processor starts executing 32-bit code since
 
 		0x7c2d:	ljmp   $0x8,$0x7c32
-the switch is cause by setting the lsb of CRO by
+the switch is cause by setting the least-significant-bit of CR0 by
 
 	0x7c23:	mov    %cr0,%eax
 	0x7c26:	or     $0x1,%eax
 	0x7c2a:	mov    %eax,%cr0
 #####2.
-The last instruction the boot loader executed is
+The last instruction that the boot loader executed is
 	
 	0x7d63:	call   *0x10018
-and the first instruction of kernel is
+and the first instruction of the kernel is
 
 	0x10000c:	movw   $0x1234,0x472
 #####3.
@@ -272,47 +272,59 @@ struct definitions are from **inc/elf.h**
 ##Ex.4
 
 #####comments on *pointers.c*
-	int a[4]; 				// a is allocated on stack
-    int *b = malloc(16); 	// b's contents is allocated in heap
-    int *c; 				// c is uninitialised
+	int a[4]; 					// a is allocated on stack
+    int *b = malloc(16); 		// b's contents is allocated in heap
+    int *c; 					// c is uninitialised
     int i; 
     printf("1: a = %p, b = %p, c = %p\n", a, b, c);
-	# 1: a = 0x7fff5e0ae8e0, b = 0x7fa1f1c03ab0, c = 0x101b51000
+	# output 1: a = 0x7fff5e0ae8e0, b = 0x7fa1f1c03ab0, c = 0x101b51000
 	
-	c = a; 					// c now points to the same array as a
+	c = a; 						// c now points to the same array as a
     for (i = 0; i < 4; i++)
-	a[i] = 100 + i;
-    c[0] = 200;				// c[0] writes to a[0]
-    printf("2: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n",
-	   a[0], a[1], a[2], a[3]);
-	# 2: a[0] = 200, a[1] = 101, a[2] = 102, a[3] = 103
+		a[i] = 100 + i;
+    c[0] = 200;					// c[0] writes to a[0]
+    
+    printf("2: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n", ...
 	
-	c[1] = 300;				// c[1] is a[1]
-    *(c + 2) = 301;			// *(c+2) is c[2] or a[2]
-    3[c] = 302;				// 3[c] is c[3] ? this is uncommon syntax
-    printf("3: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n",
-	   a[0], a[1], a[2], a[3]);
-
-	# 3: a[0] = 200, a[1] = 300, a[2] = 301, a[3] = 302
+	# output 2: a[0] = 200, a[1] = 101, a[2] = 102, a[3] = 103
 	
-	c = c + 1; 				// c now points to a[1]
+	
+	c[1] = 300;					// c[1] is a[1]
+    
+    *(c + 2) = 301;				// *(c+2) is c[2] or a[2]
+    
+    3[c] = 302;					// 3[c] is c[3] ? this is uncommon syntax
+    
+    printf("3: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n", ...
+	
+	# output 3: a[0] = 200, a[1] = 300, a[2] = 301, a[3] = 302
+	
+	
+	c = c + 1;	 				// c now points to a[1]
+    
     *c = 400;
-    printf("4: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n",
-	   a[0], a[1], a[2], a[3]);
-	   
-	# 4: a[0] = 200, a[1] = 400, a[2] = 301, a[3] = 302
+    
+    printf("4: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n", ...
+	
+	# output 4: a[0] = 200, a[1] = 400, a[2] = 301, a[3] = 302
+	
 	
 	c = (int *) ((char *) c + 1);	// c now points to (char*)a[5]
+    
     *c = 500;						// writing 4 bytes 0x000001F2 to memory at c
-    printf("5: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n",
-	   a[0], a[1], a[2], a[3]);
+    
+    printf("5: a[0] = %d, a[1] = %d, a[2] = %d, a[3] = %d\n", ...
 	
-	# 5: a[0] = 200, a[1] = 128144, a[2] = 256, a[3] = 302
+	# output 5: a[0] = 200, a[1] = 128144, a[2] = 256, a[3] = 302
+	
 	
 	b = (int *) a + 1;				// b points to a[1], original contents lost
+
     c = (int *) ((char *) a + 1);	// c points to (char*)a[1]
+
     printf("6: a = %p, b = %p, c = %p\n", a, b, c);
-	# 6: a = 0x7fff5e0ae8e0, b = 0x7fff5e0ae8e4, c = 0x7fff5e0ae8e1
+
+	# output 6: a = 0x7fff5e0ae8e0, b = 0x7fff5e0ae8e4, c = 0x7fff5e0ae8e1
 
 output of **$ i386-jos-elf-objdump -h obj/kern/kernel**
 	
@@ -331,15 +343,16 @@ output of **$ i386-jos-elf-objdump -h obj/kern/kernel**
 	                  ALLOC
 	  6 .comment      00000011  00000000  00000000  0001a300  2**0
 	                  CONTENTS, READONLY
-the kernel expects itself to be loaded to *physical* address 0x00100000, and executing at (*virtual*) address 0xf0100000
+the kernel expects itself to be loaded to ___physical___ address 0x00100000, 
+and execute at (___virtual___) address 0xf0100000
 
 ===
 ##Ex. 5
 
-after **boot/Makefrag**'s link address is changed from 0x7C00 to 0x7D00, the instructions generated will believe that it's IP starts from 0x7D00, and that related data is also 0x100 bytes away. However the loading of the bootloader is done by **BIOS**, to a hard-wired address of 0x7C00. So when it comes to this particular instruction that access somewhere in the *memory*, things break apart:
+After **boot/Makefrag**'s link address is changed from 0x7C00 to 0x7D00, the instructions generated will believe that it's IP starts from 0x7D00, and that related data is also 0x100 bytes away. However the loading of the bootloader is done by **BIOS**, to a hard-wired address of 0x7C00. So when it comes to this particular instruction that access somewhere in the *memory*, things break apart:
 
 	[   0:7c1e] 0x7c1e:	lgdtw  0x7d64
-At physical address 0x7D64 there is plain rubbish. So a incorrect GDT gets loaded. Then our bootloader tries to switch to 32-bit protected mode by a *ljmp*, the processor gets into real trouble
+At physical address 0x7D64 there is plain rubbish. So a incorrect GDT gets loaded. Then our bootloader tries to switch to 32-bit protected mode by a *ljmp* that puts out processor into real trouble
 
 	[   0:7c2d] 0x7c2d:	ljmp   $0x8,$0x7d32
 ===
@@ -347,12 +360,13 @@ At physical address 0x7D64 there is plain rubbish. So a incorrect GDT gets loade
 Break at **0x7c00** and examine memory at 0x100000 (this is a **physical** address) by 
 	
 	x/8x 0x100000
-will show uninitilised memory, zeros.
+will show uninitialised memory (zeros).
 
 Then break at kernel's entry point, memory at 0x100000 is kernel's instructions.
 
 	# kern/entry.S, line 44
 	0x10000c:	movw   $0x1234,0x472 
+	...
 
 ===
 
@@ -411,7 +425,23 @@ we should move the contents of the text buffer ***up*** by one row. That is done
 	
 **3.**
 
-in *cprintf()*, ***fmt*** points to a const string at $0xf0101b65, ***ap*** points to the parameter on stack just below *fmt*
+In *cprintf()*, ***fmt*** points to a const string at $0xf0101b65, ***ap*** points to the parameter on stack just below *fmt*.
+
+Tracing into *cons_putc*, *va_arg* and *vcprintf* is way too exhaustive. 
+Macro definitions are explained instead, to prove that I got all these:
+	
+	// sizeof(n), rounded up to a multiple of sizeof(int)
+	#define _INTSIZEOF(n)   ((sizeof(n)+sizeof(int)-1)&~(sizeof(int) - 1) ) 
+	
+	// make a va_list pointing right after `v` (which should be the first variable in list)
+	#define va_start(ap,v) ( ap = (va_list)&v + _INTSIZEOF(v) )       
+	
+	// get the current argument, and moves `ap` to point to the next 
+	#define va_arg(ap,t) ( *(t *)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)) )
+	
+	// cleanup
+	#define va_end(ap)    ( ap = (va_list)0 ) 
+GCC's approach towards variable arguments is easy to understand and indeed effective.
 
 **4.**
 
@@ -425,7 +455,7 @@ If x86 were big-endian, *int i* as a string would be *"\0dlr"* (will not be prin
 
 **5.**
 
-This malformed call to cprintf:
+This malformed call to *cprintf*:
 	
 	cprintf("x=%d y=%d", 3);
 when accessing 'y', *va_arg* will access 4 bytes on stack, just below '3' was pushed. This region could be saved %ebp, or local variables.
@@ -458,9 +488,9 @@ The entire stack space grows downwards from 0x00118000, to somewhere above 0x001
 
 **test_backtrace** is at 0xf010004a
 
-**test_backtrace** saves *%ebp*, *%ebx*, and subtracts %esp by 20 , 5 4-byte words that include 2 parameters of *cprintf*, 1 parameter for a recursive call (reused), 3 parameters for *mon_backtrace*, plus the return address pushed on stack.
+**test_backtrace** saves *%ebp*, *%ebx*, and subtracts %esp by 20 , which is five 4-byte words that include two parameters of *cprintf*, one parameter for a recursive call (reused on stack top), three parameters for *mon_backtrace*, plus the return address pushed on stack at recursive calls.
 
-In total, 8 4-byte words (32 bytes) for each nesting level.
+In total, **EIGHT** 4-byte words (32 bytes) for each nesting level.
 
 ===
 ##Ex. 11
@@ -470,22 +500,29 @@ In total, 8 4-byte words (32 bytes) for each nesting level.
 	{
 		// base pointer
 		unsigned int *bp;
+		
 		struct Eipdebuginfo info;
 		cprintf("Stack backtrace:\n");
-		// load %ebp to bp
+		
+		// load %ebp to bp, using inline asm
 		__asm__ ("movl %%ebp, %0":"=r"(bp) :);
-		// entry.S set the first %ebp to be zero
+		
+		// entry.S set the first %ebp to be zero, that's how we identify the end.
 		while (bp != 0){
+		
 			// display ebp, return address, and parameters on stack
 			cprintf("  ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\n",
 				bp, bp[1], bp[2], bp[3], bp[4], bp[5], bp[6]);
+		
 			// load and display debug info
 			debuginfo_eip(bp[1], &info);
 			cprintf("         %s:%d: %.*s+%d\n", 
 				info.eip_file, info.eip_line, 
 				info.eip_fn_namelen, info.eip_fn_name, 
 				bp[1]-(unsigned int)info.eip_fn_addr);
-			// bp points to the previous stack frame's saved %ebp
+		
+			// bp points to the previous stack frame's saved %ebp, 
+			// according to typical x86 calling conventions.
 			bp = (unsigned int*)(bp[0]);
 		}
 		return 0;
@@ -493,8 +530,7 @@ In total, 8 4-byte words (32 bytes) for each nesting level.
 
 ===
 ##Ex. 12
-**loading line numbers:**
-inside *debuginfo_eip*
+**loading line numbers:** inside *debuginfo_eip*
 
 	...
 	// N_SLINE - text segment line number
