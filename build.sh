@@ -98,6 +98,3 @@ i386-jos-elf-gdb
 # you might want Q app which is a OS X port of QEMU from
 # http://www.kju-app.org/
 # but I can't attach a debugger. Nice GUI though.
-
-
-
