@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <lib/cpuid.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -24,6 +25,8 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "backtrace", "Display detailed kernel stack trace", mon_backtrace },
+	{ "cpuinfo", "Display CPUID features", mon_cpuinfo }
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -39,6 +42,12 @@ mon_help(int argc, char **argv, struct Trapframe *tf)
 	return 0;
 }
 
+void
+wky_test_function(void){
+	int x = 1, y = 3, z = 4;
+	cprintf("x %d, y %x, z %d\n", x, y, z);
+}
+
 int
 mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 {
@@ -52,13 +61,50 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 	cprintf("  end    %08x (virt)  %08x (phys)\n", end, end - KERNBASE);
 	cprintf("Kernel executable memory footprint: %dKB\n",
 		ROUNDUP(end - entry, 1024) / 1024);
+
+	wky_test_function();
+
+	return 0;
+}
+
+int
+mon_cpuinfo(int argc, char **argv, struct Trapframe *tf){
+	int i;
+	char buffer[CPUID_BRAND_LENGTH];
+	cpuid_brand(buffer, sizeof(buffer));
+	cprintf("%s\n", buffer);
+	for (i = 0; i < CPUID_FEATURE_LENGTH; i++) {
+		if (cpuid_feature(i)) {
+			cprintf("%s ", cpuid_feature_string(i));
+		}
+	}
+	cprintf("\n");
 	return 0;
 }
 
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
-	// Your code here.
+	// base pointer
+	unsigned int *bp;
+	struct Eipdebuginfo info;
+	cprintf("Stack backtrace:\n");
+	// load %ebp to bp
+	__asm__ ("movl %%ebp, %0":"=r"(bp) :);
+	// entry.S set the first %ebp to be zero
+	while (bp != 0){
+		// display ebp, return address, and parameters on stack
+		cprintf("  ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\n",
+			bp, bp[1], bp[2], bp[3], bp[4], bp[5], bp[6]);
+		// load and display debug info
+		debuginfo_eip(bp[1], &info);
+		cprintf("         %s:%d: %.*s+%d\n", 
+			info.eip_file, info.eip_line, 
+			info.eip_fn_namelen, info.eip_fn_name, 
+			bp[1]-(unsigned int)info.eip_fn_addr);
+		// bp points to the previous stack frame's saved %ebp
+		bp = (unsigned int*)(bp[0]);
+	}
 	return 0;
 }
 
