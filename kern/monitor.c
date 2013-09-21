@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <lib/cpuid.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -25,6 +26,7 @@ static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
 	{ "backtrace", "Display detailed kernel stack trace", mon_backtrace },
+	{ "cpuinfo", "Display CPUID features", mon_cpuinfo }
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -62,6 +64,21 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 
 	wky_test_function();
 
+	return 0;
+}
+
+int
+mon_cpuinfo(int argc, char **argv, struct Trapframe *tf){
+	int i;
+	char buffer[CPUID_BRAND_LENGTH];
+	cpuid_brand(buffer, sizeof(buffer));
+	cprintf("%s\n", buffer);
+	for (i = 0; i < CPUID_FEATURE_LENGTH; i++) {
+		if (cpuid_feature(i)) {
+			cprintf("%s ", cpuid_feature_string(i));
+		}
+	}
+	cprintf("\n");
 	return 0;
 }
 
