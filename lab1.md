@@ -5,6 +5,8 @@ Lab1 reports
 
 **1100012442**
 
+* Added challenge solution on 24th Sept 10:14 UTC+8000
+
 ##Ex. 1
 Reading AT&T x86 asm syntax - done
 
@@ -472,6 +474,16 @@ b) Modify **va_arg(ap, type)** so **ap** moves to the next parameter (address de
 c) Modify other macros accordingly (not much to change).
 
 ===
+
+##Challenge 1
+####Multi-Color Text Display
+Implemented using ANSI-escape sequences ([the exact format is here](http://ascii-table.com/ansi-escape-sequences.php), but I used a different color-value mapping, see *kern/console.h*), on '[VGA-compatible text mode](http://en.wikipedia.org/wiki/VGA-compatible_text_mode)' displays.  
+Every kernel command now displays in multi-colour.
+
+####CPU Info Command
+I implemented a `cpuinfo` command, using `cpuid` instruction (library wrapping by [*Samy Al Bahra*](http://repnop.org/cpuid.html)).
+
+===
 ##Ex. 9
 
 Kernel Stack is initialised in *kern/entry.S* line 74 and 77:
@@ -542,3 +554,5 @@ In total, **EIGHT** 4-byte words (32 bytes) for each nesting level.
 		return -1;
 	}
 	...
+	
+===

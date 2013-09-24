@@ -4,12 +4,13 @@
 #include <inc/types.h>
 #include <inc/stdio.h>
 #include <inc/stdarg.h>
+#include <kern/console.h>
 
 
 static void
-putch(int ch, int *cnt)
+putch(int ch, int foreground, int background, int *cnt)
 {
-	cputchar(ch);
+	cputchar_opt(ch, foreground, background);
 	*cnt++;
 }
 

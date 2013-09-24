@@ -38,7 +38,7 @@ mon_help(int argc, char **argv, struct Trapframe *tf)
 	int i;
 
 	for (i = 0; i < NCOMMANDS; i++)
-		cprintf("%s - %s\n", commands[i].name, commands[i].desc);
+		cprintf("\x1b[14m%s\x1b[0m - %s\n", commands[i].name, commands[i].desc);
 	return 0;
 }
 
@@ -54,15 +54,15 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 	extern char _start[], entry[], etext[], edata[], end[];
 
 	cprintf("Special kernel symbols:\n");
-	cprintf("  _start                  %08x (phys)\n", _start);
-	cprintf("  entry  %08x (virt)  %08x (phys)\n", entry, entry - KERNBASE);
-	cprintf("  etext  %08x (virt)  %08x (phys)\n", etext, etext - KERNBASE);
-	cprintf("  edata  %08x (virt)  %08x (phys)\n", edata, edata - KERNBASE);
-	cprintf("  end    %08x (virt)  %08x (phys)\n", end, end - KERNBASE);
-	cprintf("Kernel executable memory footprint: %dKB\n",
+	cprintf("  _start                  \x1b[4m%08x\x1b[0m (phys)\n", _start);
+	cprintf("  entry  \x1b[4m%08x\x1b[0m (virt)  \x1b[4m%08x\x1b[0m (phys)\n", entry, entry - KERNBASE);
+	cprintf("  etext  \x1b[4m%08x\x1b[0m (virt)  \x1b[4m%08x\x1b[0m (phys)\n", etext, etext - KERNBASE);
+	cprintf("  edata  \x1b[4m%08x\x1b[0m (virt)  \x1b[4m%08x\x1b[0m (phys)\n", edata, edata - KERNBASE);
+	cprintf("  end    \x1b[4m%08x\x1b[0m (virt)  \x1b[4m%08x\x1b[0m (phys)\n", end, end - KERNBASE);
+	cprintf("Kernel executable memory footprint: \x1b[4m%d\x1b[0mKB\n",
 		ROUNDUP(end - entry, 1024) / 1024);
 
-	wky_test_function();
+	// wky_test_function();
 
 	return 0;
 }
@@ -75,7 +75,7 @@ mon_cpuinfo(int argc, char **argv, struct Trapframe *tf){
 	cprintf("%s\n", buffer);
 	for (i = 0; i < CPUID_FEATURE_LENGTH; i++) {
 		if (cpuid_feature(i)) {
-			cprintf("%s ", cpuid_feature_string(i));
+			cprintf("\x1b[3m%s\x1b[0m ", cpuid_feature_string(i));
 		}
 	}
 	cprintf("\n");
@@ -94,11 +94,11 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 	// entry.S set the first %ebp to be zero
 	while (bp != 0){
 		// display ebp, return address, and parameters on stack
-		cprintf("  ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\n",
+		cprintf("  ebp \x1b[9m%08x\x1b[0m  eip \x1b[9m%08x\x1b[0m  args \x1b[9m%08x %08x %08x %08x %08x\x1b[0m\n",
 			bp, bp[1], bp[2], bp[3], bp[4], bp[5], bp[6]);
 		// load and display debug info
 		debuginfo_eip(bp[1], &info);
-		cprintf("         %s:%d: %.*s+%d\n", 
+		cprintf("         \x1b[14m%s\x1b[0m:\x1b[2;28m%d\x1b[0;20m: \x1b[4m%.*s+\x1b[28m%d\x1b[0;20m\n", 
 			info.eip_file, info.eip_line, 
 			info.eip_fn_namelen, info.eip_fn_name, 
 			bp[1]-(unsigned int)info.eip_fn_addr);
