@@ -17,10 +17,29 @@
 #define CRT_COLS	80
 #define CRT_SIZE	(CRT_ROWS * CRT_COLS)
 
+enum COLOR {
+  C_BLACK=0,
+  C_BLUE,   // 1      
+  C_GREEN,  // 2
+  C_CYAN,   // 3
+  C_RED,    // 4
+  C_MAGENTA,// 5
+  C_BROWN,  // 6
+  C_LIGHT_GRAY, // 7
+  C_GRAY,       // 8
+  C_LIGHT_BLUE, // 9
+  C_LIGHT_GREEN,// 10
+  C_LIGHT_CYAN, // 11
+  C_LIGHT_RED,  // 12
+  C_LIGHT_MAGEMTA,  // 13
+  C_YELLOW,   //14
+  C_WHITE     //15
+};
 void cons_init(void);
 int cons_getc(void);
 
 void kbd_intr(void); // irq 1
 void serial_intr(void); // irq 4
+void cputchar_opt(int c, int foreground, int background);
 
 #endif /* _CONSOLE_H_ */

@@ -98,8 +98,9 @@ boot_alloc(uint32_t n)
 	// to a multiple of PGSIZE.
 	//
 	// LAB 2: Your code here.
-
-	return NULL;
+	result = nextfree;
+	nextfree = ROUNDUP(nextfree+n, PGSIZE);
+	return result;
 }
 
 // Set up a two-level page table:
@@ -121,11 +122,12 @@ mem_init(void)
 	i386_detect_memory();
 
 	// Remove this line when you're ready to test this function.
-	panic("mem_init: This function is not finished\n");
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
 	kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
+	// note by wky: each entry in page directory is 4-bytes, so we
+	// have 1024 entries in a 4K page.
 	memset(kern_pgdir, 0, PGSIZE);
 
 	//////////////////////////////////////////////////////////////////////
@@ -135,6 +137,9 @@ mem_init(void)
 	// following line.)
 
 	// Permissions: kernel R, user R
+	// note by wky: UVPT? may be `user visible page table`?
+	// so virtual address at UVPT maps to physical addr kern_pgdir
+	// so user can see the page directory at UVPT
 	kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
 
 	//////////////////////////////////////////////////////////////////////
@@ -143,8 +148,7 @@ mem_init(void)
 	// each physical page, there is a corresponding struct PageInfo in this
 	// array.  'npages' is the number of physical pages in memory.
 	// Your code goes here:
-
-
+	pages = (struct PageInfo*)boot_alloc(npages * sizeof(struct PageInfo));
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
 	// up the list of free physical pages. Once we've done so, all further
@@ -247,7 +251,22 @@ page_init(void)
 	// NB: DO NOT actually touch the physical memory corresponding to
 	// free pages!
 	size_t i;
-	for (i = 0; i < npages; i++) {
+	uint32_t free_page_start;
+	page_free_list = NULL;
+	pages[0].pp_ref = 1;
+	pages[0].pp_link = NULL;
+	for (i = 1; i < (IOPHYSMEM>>PGSHIFT); i++) {
+		pages[i].pp_ref = 0;
+		pages[i].pp_link = page_free_list;
+		page_free_list = &pages[i];
+	}
+	free_page_start = (PADDR(boot_alloc(0))>>PGSHIFT);
+	// from IOPHYSMEM (start of kernel) to PADDR(boot_alloc(0)) is used.
+	for (; i < free_page_start; i++){
+		pages[0].pp_ref = 1;
+		pages[0].pp_link = NULL;
+	}
+	for (; i < npages; i++) {
 		pages[i].pp_ref = 0;
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
@@ -267,7 +286,15 @@ struct PageInfo *
 page_alloc(int alloc_flags)
 {
 	// Fill this function in
-	return 0;
+	struct PageInfo* page = page_free_list;
+	if (page == NULL){
+		return NULL;
+	}
+	page_free_list = page_free_list->pp_link;
+	if (alloc_flags & ALLOC_ZERO){
+		memset(page2kva(page), 0, PGSIZE);
+	}
+	return page;
 }
 
 //
@@ -277,7 +304,8 @@ page_alloc(int alloc_flags)
 void
 page_free(struct PageInfo *pp)
 {
-	// Fill this function in
+	pp->pp_link = page_free_list;
+	page_free_list = pp;
 }
 
 //
@@ -317,6 +345,7 @@ pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// Fill this function in
+	// void *pdx = PDX(va);
 	return NULL;
 }
 
