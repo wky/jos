@@ -232,13 +232,29 @@ Now my version of jos lab2 passes all checks.
 ##Challenges
 
 ####Large page size, 4MB pages
-First we must check that the CPU supports `PSE`, page size extension. I've integrated the `cpuinfo` command into kernel monitor. And yes, our dear friend QEMU supports `PSE`.
+First we must check that the CPU supports `PSE`, page size extension. I've integrated the `cpuinfo` command into kernel monitor. And yes, our dear friend QEMU supports `PSE`.  
+In order to enable 4M pages, we must set both the `CR4.PSE` and the `PDE.PS` bit.
+
+reference:[Understanding 4M Page Size Extensions
+on the Pentium Processor, Robert R. Collins](http://www.rcollins.org/ddj/May96/)
+
+But in reality, we must completely refactor our kernel, especially the memory management part, to make use of 4M pages, since most of our functions relied on the fact that pages were 4K in size, and MMU did two-stage paging.
 
 ---
 ####Extend the kernel monitor to show and manage memory mappings
+I've written a `showmappings` command, which take 2 arguments, interpret them as virtual addresses, and show mappings in between (inclusive, to page boundary). The permission bits: see QEMU source code `<QEMU_DIR>/monitor.c:2190-2197`,  and their meanings: [Paging - OSDev](http://wiki.osdev.org/Paging). And the screenshot `showmappings.png`.
+
+
+~~I seriously doubt the necessity of implementing a function to _'Explicitly set, clear, or change the permissions of any mapping in the current address space'_. It might be cool to fiddle with page permissions through a command-line interface, but wouldn't it be better to do that by code? Another reason is that it is very annoying to parse command line arguments, without proper libraries.~~
+
+And I did `memdump` command, to inspect both virtual memory and physical memory. It does careful checking on page borders and ranges. See the screenshot `memdump.png`.
 
 ---
 ####Redesign the kernel to allow user programs to use the full 4GB virtual address space
 
+Explain in detail
+
 ---
 ####Implement a general allocator, to support 2^n-pages allocations
+
+yes, implement one.
