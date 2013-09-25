@@ -4,6 +4,8 @@ __YANG Weikun 1100012442__
 
 25th September 2013, 11:45 UTC+0800
 
+* update on challenges 26th Sept. 2013 00:05 +0800
+    
 ---
 
 ##Preface
@@ -222,7 +224,7 @@ Now my version of jos lab2 passes all checks.
 4. If we were to manage 4GB RAM, using `jos`'s style, we must:
     * allocate `PageInfo`s, 4GB-total-RAM / 4KB-per-page * 8bytes-per-PageInfo = 8MB
     * allocate space for kernel page directory, 4KB
-    * allocate space for kernel page tables. When half of the physical pages are used, we need 2GB-RAM / 4K-per-page / 1K-PTE-per-page * 4K-per-page = 2MB. When all pages are mapped, we need 4MB for page tables.
+    * allocate space for kernel page tables. When all of the physical pages are used, we need 4GB-RAM / 4K-per-page / 1K-PTE-per-page * 4K-per-page = 4MB. We need 4MB for page tables.
     
    Therefore, we need a bit more than 12MB to manage all physical pages in 4GB-RAM.
 5. `EIP` went above `KERNBASE` after the `imp *%eax` instruction. We can still run at low `EIP` before the `jmp`, because that the page directory and page tables in `entrypgdir.S` maps virtual address `[0, 4MB)` and `[KERNBASE, KERNBASE+4MB)` to the same physical address `[0, 4MB)`. This transition is necessary, for the reason that our kernel ELF's VMA is in high address.
@@ -238,7 +240,11 @@ In order to enable 4M pages, we must set both the `CR4.PSE` and the `PDE.PS` bit
 reference:[Understanding 4M Page Size Extensions
 on the Pentium Processor, Robert R. Collins](http://www.rcollins.org/ddj/May96/)
 
-But in reality, we must completely refactor our kernel, especially the memory management part, to make use of 4M pages, since most of our functions relied on the fact that pages were 4K in size, and MMU did two-stage paging.
+But in reality, we must completely refactor our kernel, especially the memory management part, to make use of 4M pages, since most of our functions relied on the fact that pages were 4K in size, and our hardware MMU did two-stage paging.
+
+In fact it is not a bad idea to combine 4M super-pages with 4K normal pages. The advantages are promising but it seams that both OS developers and CPU designers prefers 4K pages. I've checked TLB details on recent Intel processors namely [i5-2400 Sandy Bridge](http://7-cpu.com/cpu/SandyBridge.html), and discovered that the processor has significantly less TLB entries for 4M pages. I know we would need less TLB entries, and the miss penalty is significantly reduced, but the processors are really tuned to use 4K pages.
+
+For systems using 64-bit processors and much more than 4G RAM, paging is some sort of performance bottle neck for real world applications. So large pages might become a new trend. (Well, not before the [DRAM price](https://www.google.com.hk/#q=dram+price) ever drop back to a reasonable level, which will never happened if it follows the path of [hard-disks](https://www.google.com.hk/#q=hdd+price+and+thailand+flood)).
 
 ---
 ####Extend the kernel monitor to show and manage memory mappings
@@ -252,9 +258,15 @@ And I did `memdump` command, to inspect both virtual memory and physical memory.
 ---
 ####Redesign the kernel to allow user programs to use the full 4GB virtual address space
 
-Explain in detail
+Currently I do not have a very clear view of Process Management, or System Call Interface. Therefore it is rather hard to present a thorough design, especially when Google fails to come up with a decent page explaining what exactly _'Follow up the bouncing kernel'_ is.
+
+I don't see many advantages at the moment, to give user programs the whole address space, on architectures using 32-bit address lines. We are all using 64-bit PC, and we need more than 4G RAM (not just 4G address space, which might be backed by pages on hard-disk), and without PAE. For 32-bit mobile devices, currently no manufacturer stacks 4G RAM inside a _mobile_ device. And Apple's just introduce iPhone 5S, with a 64-bit processor! That solves all problems, regarding limited address space.
+
+As for disadvantages, the first one is: Where do I keep the kernel in this virtual address space? OK, we could redirect page directories, each time a context switch occurs, which obviously slows down our OS. Next, how does the kernel grab data from user space? OK, we could do manual address translation, and remap the physical address to some where in kernel space, but again, EVERY time a system call occurs.
+
+So, most rational system designers allocated some room in the virtual address space for the all mighty kernel to breathe.
 
 ---
 ####Implement a general allocator, to support 2^n-pages allocations
 
-yes, implement one.
+The most straight forward solution could be _'buddy system'_. A better one would be using the `malloc/free`'s idea, on page granularity. I'll implement this a bit later, after I figure out typical cases where a general allocator is necessary.
