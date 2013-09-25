@@ -1,0 +1,496 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote {
+    margin: 0;
+    padding: 0;
+}
+body {
+    font-family: "Helvetica Neue", Helvetica, "Hiragino Sans GB", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 18px;
+    color: #737373;
+    background-color: white;
+    margin: 10px 13px 10px 13px;
+}
+table {
+	margin: 10px 0 15px 0;
+	border-collapse: collapse;
+}
+td,th {	
+	border: 1px solid #ddd;
+	padding: 3px 10px;
+}
+th {
+	padding: 5px 10px;	
+}
+
+a {
+    color: #0069d6;
+}
+a:hover {
+    color: #0050a3;
+    text-decoration: none;
+}
+a img {
+    border: none;
+}
+p {
+    margin-bottom: 9px;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: #404040;
+    line-height: 36px;
+}
+h1 {
+    margin-bottom: 18px;
+    font-size: 30px;
+}
+h2 {
+    font-size: 24px;
+}
+h3 {
+    font-size: 18px;
+}
+h4 {
+    font-size: 16px;
+}
+h5 {
+    font-size: 14px;
+}
+h6 {
+    font-size: 13px;
+}
+hr {
+    margin: 0 0 19px;
+    border: 0;
+    border-bottom: 1px solid #ccc;
+}
+blockquote {
+    padding: 13px 13px 21px 15px;
+    margin-bottom: 18px;
+    font-family:georgia,serif;
+    font-style: italic;
+}
+blockquote:before {
+    content:"\201C";
+    font-size:40px;
+    margin-left:-10px;
+    font-family:georgia,serif;
+    color:#eee;
+}
+blockquote p {
+    font-size: 14px;
+    font-weight: 300;
+    line-height: 18px;
+    margin-bottom: 0;
+    font-style: italic;
+}
+code, pre {
+    font-family: Monaco, Andale Mono, Courier New, monospace;
+}
+code {
+    /*background-color: #fee9cc;*/
+    color: rgba(0, 0, 0, 0.75);
+    padding: 1px 3px;
+    font-size: 12px;
+    -webkit-border-radius: 3px;
+    -moz-border-radius: 3px;
+    border-radius: 3px;
+}
+pre {
+    display: block;
+    padding: 14px;
+    margin: 0 0 18px;
+    line-height: 16px;
+    font-size: 11px;
+    border: 1px solid #d9d9d9;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code {
+    background-color: #fff;
+    color:#737373;
+    font-size: 11px;
+    padding: 0;
+}
+sup {
+    font-size: 0.83em;
+    vertical-align: super;
+    line-height: 0;
+}
+* {
+	-webkit-print-color-adjust: exact;
+}
+@media screen and (min-width: 914px) {
+    body {
+        width: 854px;
+        margin:10px auto;
+    }
+}
+@media print {
+	body,code,pre code,h1,h2,h3,h4,h5,h6 {
+		color: black;
+	}
+	table, pre {
+		page-break-inside: avoid;
+	}
+}
+</style>
+<title>Lab 2 Memory Management</title>
+
+</head>
+<body>
+<h1>Lab 2 Memory Management</h1>
+
+<p><strong>YANG Weikun 1100012442</strong></p>
+
+<p>25th September 2013, 11:45 UTC+0800</p>
+
+<ul>
+<li>update on challenges 26th Sept. 2013 00:05 +0800</li>
+</ul>
+
+
+<hr />
+
+<h2>Preface</h2>
+
+<p>Jos git repo was first switched to branch lab2 (using <code>git checkout -b lab2 origin/lab2</code>), then the changes performed in lab1 was merged by <code>git merge lab1</code>.</p>
+
+<h2>Ex.1</h2>
+
+<h4>physical page allocator</h4>
+
+<p>This exercise requires a <em>physical</em> page allocator, which needs to keep track of all pages, and more importantly, free pages. Physical pages are referenced using <code>struct PageInfo</code>, and free pages are linked together. Before any page allocation to occur, we must reserve space in memory to hold all the <code>PageInfo</code> structures, using <code>boot_alloc()</code>:</p>
+
+<pre><code>boot_alloc(uint32_t n)
+{
+    static char *nextfree;
+    char *result;
+    if (!nextfree) {
+        // end is marked by the linker to indicate the end of memory used by
+        // the kernel, after which we may use for bootstrap allocation.
+        extern char end[]; 
+        nextfree = ROUNDUP((char *) end, PGSIZE);
+    }
+    result = nextfree;
+    // memory allocated mudt be page-aligned
+    nextfree = ROUNDUP(nextfree+n, PGSIZE);
+    return result;
+}
+</code></pre>
+
+<p>Then, inside <code>mem_init()</code>, we allocate a page (4K bytes) for our new page directory <code>kern_pgdir</code> (later used in paging), and map the <em>virtual</em> address at <code>UVPT</code> to <em>physical</em> address of <code>kern_pgdir</code>. What happened here?</p>
+
+<pre><code>kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
+// note by wky: each entry in page directory is 4-bytes, so we
+// have 1024 entries in a 4K page.
+memset(kern_pgdir, 0, PGSIZE);
+kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
+</code></pre>
+
+<p>Explained: page directory contains page directory entries (PDEs), which contain the <strong><em>physical</em></strong> address of the corresponding page table and marker bits. The last statement, sets the <strong>page table</strong> that maps <em>virtual</em> address <code>UVPT</code>, to <code>kern_pgdir</code> itself, with user read permission. So whenever we address somewhere in <code>[UVTP, UVTP+4MB)</code>, the first step in paging lead us to a page table at <code>kernpg_dir</code>, then our page table index becomes page directory index, so reading 4 bytes from <code>UVPT+4*n</code> will give us the <em>n</em>-th <strong>PDE</strong>, which stores <em>physical</em> address and permissions of the corresponding page table (that contains mapping in the range <code>[n*4MB,(n+1)*4MB)</code>).</p>
+
+<p>Then we allocate space for <code>PageInfo</code>, and initialise them:</p>
+
+<pre><code>pages = (struct PageInfo*)boot_alloc(npages * sizeof(struct PageInfo));
+page_init();
+</code></pre>
+
+<p>In <code>page_init()</code>, we must</p>
+
+<ol>
+<li>Mark page 0 (memory [0, 4K) ) as in use, to leave the old interrupt vector table and bios structures alone.</li>
+<li>Mark memory <code>[PGSIZE, IOPHYSMEM)</code> free, link them on the list.</li>
+<li>The IO hole occupies <code>[IOPHYSMEM, EXTPHYSMEM)</code> which is [640K, 1M). The kernel itself plus page directory and <code>PageInfo</code>s occupy the range from <code>EXPHYSMEM</code> to physical address of <code>boot_alloc(0)</code>.</li>
+<li>Mark the rest free, and link them to the list starting from <code>page_free_list</code>. The list is actually reverse ordered, if you count from lower memory.</li>
+</ol>
+
+
+<p>Next, we implement <code>page_alloc()</code> and <code>page_free()</code>, just easy pointers handling.</p>
+
+<p>Now we should be able to pass <code>check_page_alloc()</code>.</p>
+
+<hr />
+
+<h2>Ex.2</h2>
+
+<h5>How a x86 processor translates virtual to physical?</h5>
+
+<p>After we have entered protected mode, enabled paging, our dear CPU would provide a two stage translation for us.</p>
+
+<ol>
+<li><strong>Virtual -> Linear</strong> Each of our 4-byte pointer are actually just an offset, to a 'selector', like in old times (8086 segment&lt;&lt;4 + offset). But the GDT we installed at start-up effectively sets all segment selectors to start from <code>0x0</code>, and extends to <code>0xffffffff</code>. So currently in <code>jos</code>, segmentation has no effect. Our virtual and linear addresses are equivalent.</li>
+<li><strong>Linear -> Physical</strong> Linear addresses are then mapped to physical addresses, here using two stage 'Paging' mechanism. Explained in Chapter 5, section 2 of  <a href="http://pdos.csail.mit.edu/6.828/2012/readings/i386/s05_02.htm">Intel 80386 Reference Manual</a>, a linear address is plot in 3 parts, page-directory-index (10 bits, MSB), page-table-index (10 bits in middle), and offset within page (12 bits, LSB). The processors MMU's mechanism in detail:
+
+<ul>
+<li>Page directory's physical address is stored in CR3, a special register. Take 4 bytes from CR3 + 4 * page-directory-index, which is a page-directory-entry holding the physical address of the page table and permission bits.</li>
+<li>Find the page table, use the page-table-index to get the page-table-entry that holds the physical address of the actual page, and use the 12 bit offset to address the wanted memory.</li>
+</ul>
+</li>
+</ol>
+
+
+<p>What a mess! And we must access main memory 3 times, to load a couple of bytes to our register, so the CPUs really rely on Translation-Look-aside-Buffers for better performance.</p>
+
+<hr />
+
+<h2>Ex.3</h2>
+
+<h4>Memory Inspection using QEMU monitor commands</h4>
+
+<p>When the kernel enters monitor loop after initialisation, typing <code>info pg</code> in QEMU command console shows mapping details (ordered by physical page number, not complete):</p>
+
+<pre><code>VPN range        Entry        Flags        PPN range
+...
+[f0000-f03ff]  PDE[3c0]     ----A--UWP
+    [f0000-f0000]  PTE[000]     --------WP 00000
+    [f0001-f009f]  PTE[001-09f] ---DA---WP 00001-0009f
+    ...
+    [f0100-f0101]  PTE[100-101] ----A---WP 00100-00101
+    [f0102-f0102]  PTE[102]     --------WP 00102
+    ...
+    [f03be-f03ff]  PTE[3be-3ff] --------WP 003be-003ff
+...
+</code></pre>
+
+<p><code>info registers</code> shows</p>
+
+<pre><code>...
+GDT=     00007c4c 00000017
+IDT=     00000000 000003ff
+CR0=80050033 CR2=00000000 CR3=00123000 CR4=00000000
+...
+</code></pre>
+
+<p>Just another word: MIT's description on entering QEMU's monitor <em>'To enter the monitor, press Ctrl-a c in the terminal running QEMU'</em>. I thought <em>Ctrl-a c</em> meant <em>press <code>ctrl</code> and hold, press <code>a</code> and hold, then press <code>c</code></em>. But actually it is <strong><em>press <code>ctrl</code> and hold, press <code>a</code>, release, then press <code>c</code></em></strong>.</p>
+
+<h4>Q&amp;A</h4>
+
+<p>code:</p>
+
+<pre><code>mystery_t x;
+char* value = return_a_pointer();
+*value = 10;
+x = (mystery_t) value;
+</code></pre>
+
+<p>Here <code>mystery_t</code> should be <code>uintptr_t</code>, since <code>char* value</code> is a virtual address pointer.</p>
+
+<hr />
+
+<h2>Ex.4</h2>
+
+<h4>Page Table Management</h4>
+
+<p><code>pgdir_walk()</code> is reference in many other functions so it is implemented first. It must perform exactly as hardware MMU, and create new mappings when necessary.
+I used <code>goto</code> to avoid complex control structures here and many other functions.</p>
+
+<pre><code>pte_t *
+pgdir_walk(pde_t *pgdir, const void *va, int create)
+{
+    pte_t* pgtbl;   // points to a page table
+    pde_t* pde;     // points to a page directory entry
+    struct PageInfo* newpg;
+
+    pde = &amp;pgdir[PDX(va)];
+    pgtbl = (pte_t*)PTE_ADDR(*pde);
+
+    if (*pde &amp; PTE_P)
+        goto get_page_entry;    // if the pde is in use already
+    if (!create)
+        return NULL;
+    newpg = page_alloc(ALLOC_ZERO); // allocate new page for page table
+    if (!newpg)
+        return NULL;
+    newpg-&gt;pp_ref ++;
+    pgtbl = (pte_t*)page2pa(newpg);
+    *pde = (uintptr_t)pgtbl | PTE_P | PTE_W | PTE_U;
+
+get_page_entry:
+    pgtbl = KADDR((uintptr_t)pgtbl);
+    return (pte_t*)(&amp;pgtbl[PTX(va)]);   // return an entry in page table
+}
+</code></pre>
+
+<p>The next one is <code>boot_map_region()</code>. For every page in range <code>[va, va+size)</code>, I used <code>pgdir_walk()</code> to acquire the page-table-entry, and fill it with appropriate physical address and permission. <strong>Note</strong> that <code>va+size</code> can cause 32-bit integer overflow, when <code>va+size</code> is the end of 4GB.</p>
+
+<pre><code>static void
+boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
+{
+    uintptr_t end_va = va + size;
+    pte_t *entry;
+    for (; va != end_va; va += PGSIZE, pa += PGSIZE){
+        entry = pgdir_walk(pgdir, (void*)va, true);
+        if (entry == NULL)
+            panic("Page table allocation failed.");
+        *entry = pa | perm | PTE_P;
+    }
+}
+</code></pre>
+
+<p>Next, <code>page_lookup()</code>. Again I used <code>pgdir_walk()</code> to find the corresponding PTE, and convert the physical address to <code>PageInfo*</code>.</p>
+
+<pre><code>struct PageInfo *
+page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
+{
+    pte_t * entry = pgdir_walk(pgdir, va, false);
+    if (pte_store)
+        *pte_store = entry;
+    if (!entry)
+        return NULL;
+    return pa2page(PTE_ADDR(*entry));
+}
+</code></pre>
+
+<p>Moving on to <code>page_remove()</code>. Use <code>page_lookup()</code> to acquire both PTE and the actual page. Easy one.</p>
+
+<pre><code>void
+page_remove(pde_t *pgdir, void *va)
+{
+    struct PageInfo *page;
+    pte_t * entry;
+    page = page_lookup(pgdir, va, &amp;entry);
+    if (!(page &amp;&amp; (*entry &amp; PTE_P)))
+        return;
+    page_decref(page);
+    *entry = 0;
+    tlb_invalidate(pgdir, va);
+}
+</code></pre>
+
+<p>At last, we must deal with <code>page_insert</code>. The 'corner-case hint' said <em>'there's an elegant way to handle everything in one code path'</em>, on mapping the same page to the same address just to change permission. But to the extent of my now knowledge and experience, I found no <em>'one code path'</em> to solve all cases. So i tried to detect the corner-case, and handle reference count manually to avoid the page being freed (when ref-cnt  reaches 0). Here's my code for clarity:</p>
+
+<pre><code>int
+page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
+{
+    pte_t *entry = pgdir_walk(pgdir, va, true);
+    if (!entry)
+        return -E_NO_MEM;
+    if (!(*entry &amp; PTE_P))
+        goto map_new_page;
+    if (PTE_ADDR(*entry) == page2pa(pp)){
+        tlb_invalidate(pgdir, va);
+        pp-&gt;pp_ref --;
+    }else page_remove(pgdir, va);
+map_new_page:
+    *entry = page2pa(pp) | perm | PTE_P;
+    pp-&gt;pp_ref ++;
+    return 0;
+}
+</code></pre>
+
+<p>That completes page table management.</p>
+
+<hr />
+
+<h2>Ex.5</h2>
+
+<h4>The Kernel Address Space</h4>
+
+<p>Before moving on, we must setup correct mappings, for those pages marked used in <code>page_init()</code> (they will not be managed by function implemented in Ex.4, so we are doing the mapping manually). In <code>mem_init()</code> after <code>check_page()</code>, 3 mappings were called:</p>
+
+<ol>
+<li>Map <code>PageInfo</code> structures to virtual address <code>UPAGES</code>, with user read permission.</li>
+<li>Map <code>[KSTACKTOP-KSTKSIZE, KSTACKTOP)</code> to the actual stack, with kernel write permission, and leave <code>[KSTACKTOP-PTSIZE, KSTACKTOP-KSTKSIZE)</code> unmapped so a page fault will be thrown if the kernel stack overflows.</li>
+<li>Map <code>KERNBASE</code> to end of 4GB, to physical memory starting from <code>0x0</code>. Doing this will limit our OS to 256MB of RAM, but never mind.</li>
+</ol>
+
+
+<p>And the corresponding code:</p>
+
+<pre><code>boot_map_region(kern_pgdir, UPAGES, 
+    ROUNDUP(npages * sizeof(struct PageInfo), PGSIZE),
+    PADDR(pages), PTE_U | PTE_P);
+
+boot_map_region(kern_pgdir, KSTACKTOP-KSTKSIZE, KSTKSIZE,
+    PADDR(bootstack), PTE_W);
+
+boot_map_region(kern_pgdir, KERNBASE, -KERNBASE, 0, PTE_W);
+</code></pre>
+
+<p>Now my version of jos lab2 passes all checks.</p>
+
+<h4>Q&amp;A</h4>
+
+<ol>
+<li><p>page mappings.</p></li>
+<li><p>protection?</p></li>
+<li><p>JOS supports maximum 256MB of RAM.</p></li>
+<li><p>If we were to manage 4GB RAM, using <code>jos</code>'s style, we must:</p>
+
+<ul>
+<li>allocate <code>PageInfo</code>s, 4GB-total-RAM / 4KB-per-page * 8bytes-per-PageInfo = 8MB</li>
+<li>allocate space for kernel page directory, 4KB</li>
+<li>allocate space for kernel page tables. When all of the physical pages are used, we need 4GB-RAM / 4K-per-page / 1K-PTE-per-page * 4K-per-page = 4MB. We need 4MB for page tables.</li>
+</ul>
+
+
+<p>Therefore, we need a bit more than 12MB to manage all physical pages in 4GB-RAM.</p></li>
+<li><code>EIP</code> went above <code>KERNBASE</code> after the <code>imp *%eax</code> instruction. We can still run at low <code>EIP</code> before the <code>jmp</code>, because that the page directory and page tables in <code>entrypgdir.S</code> maps virtual address <code>[0, 4MB)</code> and <code>[KERNBASE, KERNBASE+4MB)</code> to the same physical address <code>[0, 4MB)</code>. This transition is necessary, for the reason that our kernel ELF's VMA is in high address.</li>
+</ol>
+
+
+<hr />
+
+<h2>Challenges</h2>
+
+<h4>Large page size, 4MB pages</h4>
+
+<p>First we must check that the CPU supports <code>PSE</code>, page size extension. I've integrated the <code>cpuinfo</code> command into kernel monitor. And yes, our dear friend QEMU supports <code>PSE</code>.<br/>
+In order to enable 4M pages, we must set both the <code>CR4.PSE</code> and the <code>PDE.PS</code> bit.</p>
+
+<p>reference:<a href="http://www.rcollins.org/ddj/May96/">Understanding 4M Page Size Extensions
+on the Pentium Processor, Robert R. Collins</a></p>
+
+<p>But in reality, we must completely refactor our kernel, especially the memory management part, to make use of 4M pages, since most of our functions relied on the fact that pages were 4K in size, and our hardware MMU did two-stage paging.</p>
+
+<p>In fact it is not a bad idea to combine 4M super-pages with 4K normal pages. The advantages are promising but it seams that both OS developers and CPU designers prefers 4K pages. I've checked TLB details on recent Intel processors namely <a href="http://7-cpu.com/cpu/SandyBridge.html">i5-2400 Sandy Bridge</a>, and discovered that the processor has significantly less TLB entries for 4M pages. I know we would need less TLB entries, and the miss penalty is significantly reduced, but the processors are really tuned to use 4K pages.</p>
+
+<p>For systems using 64-bit processors and much more than 4G RAM, paging is some sort of performance bottle neck for real world applications. So large pages might become a new trend. (Well, not before the <a href="https://www.google.com.hk/#q=dram+price">DRAM price</a> ever drop back to a reasonable level, which will never happened if it follows the path of <a href="https://www.google.com.hk/#q=hdd+price+and+thailand+flood">hard-disks</a>).</p>
+
+<hr />
+
+<h4>Extend the kernel monitor to show and manage memory mappings</h4>
+
+<p>I've written a <code>showmappings</code> command, which take 2 arguments, interpret them as virtual addresses, and show mappings in between (inclusive, to page boundary). The permission bits: see QEMU source code <code>&lt;QEMU_DIR&gt;/monitor.c:2190-2197</code>,  and their meanings: <a href="http://wiki.osdev.org/Paging">Paging - OSDev</a>. And the screenshot <code>showmappings.png</code>.</p>
+
+<p><del>I seriously doubt the necessity of implementing a function to <em>'Explicitly set, clear, or change the permissions of any mapping in the current address space'</em>. It might be cool to fiddle with page permissions through a command-line interface, but wouldn't it be better to do that by code? Another reason is that it is very annoying to parse command line arguments, without proper libraries.</del></p>
+
+<p>And I did <code>memdump</code> command, to inspect both virtual memory and physical memory. It does careful checking on page borders and ranges. See the screenshot <code>memdump.png</code>.</p>
+
+<hr />
+
+<h4>Redesign the kernel to allow user programs to use the full 4GB virtual address space</h4>
+
+<p>Currently I do not have a very clear view of Process Management, or System Call Interface. Therefore it is rather hard to present a thorough design, especially when Google fails to come up with a decent page explaining what exactly <em>'Follow up the bouncing kernel'</em> is.</p>
+
+<p>I don't see many advantages at the moment, to give user programs the whole address space, on architectures using 32-bit address lines. We are all using 64-bit PC, and we need more than 4G RAM (not just 4G address space, which might be backed by pages on hard-disk), and without PAE. For 32-bit mobile devices, currently no manufacturer stacks 4G RAM inside a <em>mobile</em> device. And Apple's just introduce iPhone 5S, with a 64-bit processor! That solves all problems, regarding limited address space.</p>
+
+<p>As for disadvantages, the first one is: Where do I keep the kernel in this virtual address space? OK, we could redirect page directories, each time a context switch occurs, which obviously slows down our OS. Next, how does the kernel grab data from user space? OK, we could do manual address translation, and remap the physical address to some where in kernel space, but again, EVERY time a system call occurs.</p>
+
+<p>So, most rational system designers allocated some room in the virtual address space for the all mighty kernel to breathe.</p>
+
+<hr />
+
+<h4>Implement a general allocator, to support 2^n-pages allocations</h4>
+
+<p>The most straight forward solution could be <em>'buddy system'</em>. A better one would be using the <code>malloc/free</code>'s idea, on page granularity. I'll implement this a bit later, after I figure out typical cases where a general allocator is necessary.</p>
+</body>
+</html>
