@@ -5,6 +5,7 @@ __YANG Weikun 1100012442__
 25th September 2013, 11:45 UTC+0800
 
 * update on challenges 26th Sept. 2013 00:05 +0800
+* update some Q&A on 26th Sept. 2013 10:00 +0800
     
 ---
 
@@ -215,9 +216,13 @@ And the corresponding code:
 Now my version of jos lab2 passes all checks.
 
 ####Q&A
-1. page mappings.
-
-2. protection?
+1. Using `showmappings` command we can see that:
+    * currently no address below `UPAGES` are mapped. Will be when we introduce user programs.
+    * `[UPAGES, ULIM)` is mapped to current page directories and tables. 
+    * Address above `KERNBASE` points to physical memory. 
+    * The 8 pages right below `KERNBASE` is where our kernel stack lives.
+    
+2. `[UPAGES, ULIM)` (`UVPT` is inside) is the only part of our current virtual address space, configured with PTE_U (user read permission). So user programs will not be able to modify any sensitive data. The rest of the address space are not given user permission, user programs that tries to access will cause a page fault.
 
 3. JOS supports maximum 256MB of RAM.
 

@@ -164,6 +164,7 @@ sup {
 
 <ul>
 <li>update on challenges 26th Sept. 2013 00:05 +0800</li>
+<li>update some Q&amp;A on 26th Sept. 2013 10:00 +0800</li>
 </ul>
 
 
@@ -430,8 +431,16 @@ boot_map_region(kern_pgdir, KERNBASE, -KERNBASE, 0, PTE_W);
 <h4>Q&amp;A</h4>
 
 <ol>
-<li><p>page mappings.</p></li>
-<li><p>protection?</p></li>
+<li><p>Using <code>showmappings</code> command we can see that:</p>
+
+<ul>
+<li>currently no address below <code>UPAGES</code> are mapped. Will be when we introduce user programs.</li>
+<li><code>[UPAGES, ULIM)</code> is mapped to current page directories and tables.</li>
+<li>Address above <code>KERNBASE</code> points to physical memory.</li>
+<li>The 8 pages right below <code>KERNBASE</code> is where our kernel stack lives.</li>
+</ul>
+</li>
+<li><p><code>[UPAGES, ULIM)</code> (<code>UVPT</code> is inside) is the only part of our current virtual address space, configured with PTE_U (user read permission). So user programs will not be able to modify any sensitive data. The rest of the address space are not given user permission, user programs that tries to access will cause a page fault.</p></li>
 <li><p>JOS supports maximum 256MB of RAM.</p></li>
 <li><p>If we were to manage 4GB RAM, using <code>jos</code>'s style, we must:</p>
 
