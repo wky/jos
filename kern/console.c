@@ -163,6 +163,8 @@ static void
 cga_putc(int c)
 {
 	// if no attribute given, then use black on white
+	// 0x0700 here high part 07 means 0 for black and 7 for light gray
+	// see more http://en.wikipedia.org/wiki/Color_Graphics_Adapter
 	if (!(c & ~0xFF))
 		c |= 0x0700;
 
@@ -447,6 +449,12 @@ cons_init(void)
 
 
 // `High'-level console I/O.  Used by readline and cprintf.
+
+void
+cputchar_opt(int c, int foreground, int background){
+	int ch = (c&0x00FF) | ((foreground&0x000F) | (background&0x000F)<<4) <<8 ;
+	cons_putc(ch);
+}
 
 void
 cputchar(int c)
