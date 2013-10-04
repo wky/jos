@@ -153,7 +153,7 @@ mem_init(void)
 	//////////////////////////////////////////////////////////////////////
 	// Make 'envs' point to an array of size 'NENV' of 'struct Env'.
 	// LAB 3: Your code here.
-
+	envs = (struct Env*)boot_alloc(NENV * sizeof(struct Env));
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
 	// up the list of free physical pages. Once we've done so, all further
@@ -186,7 +186,9 @@ mem_init(void)
 	//    - the new image at UENVS  -- kernel R, user R
 	//    - envs itself -- kernel RW, user NONE
 	// LAB 3: Your code here.
-
+	boot_map_region(kern_pgdir, UENVS,
+		ROUNDUP(NENV * sizeof(struct Env), PGSIZE),
+		PADDR(envs), PTE_U | PTE_P);
 	//////////////////////////////////////////////////////////////////////
 	// Use the physical memory that 'bootstack' refers to as the kernel
 	// stack.  The kernel stack grows down from virtual address KSTACKTOP.
@@ -538,7 +540,17 @@ int
 user_mem_check(struct Env *env, const void *va, size_t len, int perm)
 {
 	// LAB 3: Your code here.
-
+	void *begin = (void*)ROUNDDOWN(va, PGSIZE);
+	void *end = (void*)ROUNDUP(va+len, PGSIZE);
+	pte_t * pte_ptr;
+	perm = perm | PTE_P;
+	for ( ; begin < end; begin += PGSIZE)
+		if ((uint32_t)begin >= ULIM
+			|| !(pte_ptr = pgdir_walk(env->env_pgdir, begin, 0))
+			|| (*pte_ptr & perm) != perm){
+			user_mem_check_addr = (uint32_t)((va > begin)? va: begin);
+			return -E_FAULT;
+		}
 	return 0;
 }
 
@@ -737,7 +749,7 @@ check_kern_pgdir(void)
 	assert(check_va2pa(pgdir, KSTACKTOP - PTSIZE) == ~0);
 
 	// check PDE permissions
-	for (i = 0; i < NPDENTRIES; i++) {
+	for (i = 0; i < npages / NPTENTRIES; i++) {
 		switch (i) {
 		case PDX(UVPT):
 		case PDX(KSTACKTOP-1):
