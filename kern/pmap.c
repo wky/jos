@@ -212,13 +212,11 @@ mem_init(void)
 	// we just set up the mapping anyway.
 	// Permissions: kernel RW, user NONE
 	// Your code goes here:
-
+	// !!MAP ONLY AVAILIBLE MEMORY!!
+	boot_map_region(kern_pgdir, KERNBASE, npages*PGSIZE, 0, PTE_W);
 
 	// Initialize the SMP-related parts of the memory map
 	mem_init_mp();
-
-	// !!MAP ONLY AVAILIBLE MEMORY!!
-	boot_map_region(kern_pgdir, KERNBASE, npages*PGSIZE, 0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -267,7 +265,10 @@ mem_init_mp(void)
 	//     Permissions: kernel RW, user NONE
 	//
 	// LAB 4: Your code here:
-
+	int i;
+	for (i = 0; i < NCPU; i++)
+		boot_map_region(kern_pgdir, KSTACKTOP - i * (KSTKSIZE + KSTKGAP) -KSTKSIZE,
+			KSTKSIZE, PADDR(percpu_kstacks[i]), PTE_W);
 }
 
 // --------------------------------------------------------------
@@ -308,14 +309,27 @@ page_init(void)
 	// free pages!
 	size_t i;
 	uint32_t free_page_start;
+	
 	page_free_list = NULL;
 	pages[0].pp_ref = 1;
 	pages[0].pp_link = NULL;
-	for (i = 1; i < (IOPHYSMEM>>PGSHIFT); i++) {
+	
+	for (i = 1; i < (MPENTRY_PADDR>>PGSHIFT); i++) {
 		pages[i].pp_ref = 0;
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
 	}
+	
+	// assuming mpentry.S used less than 1 page
+	pages[i].pp_ref = 1;
+	pages[i].pp_link = NULL;
+
+	for (i++ ; i < (IOPHYSMEM>>PGSHIFT); i++) {
+		pages[i].pp_ref = 0;
+		pages[i].pp_link = page_free_list;
+		page_free_list = &pages[i];
+	}
+	
 	free_page_start = (PADDR(boot_alloc(0))>>PGSHIFT);
 	// from IOPHYSMEM (start of kernel) to PADDR(boot_alloc(0)) is used.
 	for (; i < free_page_start; i++){
@@ -565,7 +579,7 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// value will be preserved between calls to mmio_map_region
 	// (just like nextfree in boot_alloc).
 	static uintptr_t base = MMIOBASE;
-
+	uintptr_t old_base;
 	// Reserve size bytes of virtual memory starting at base and
 	// map physical pages [pa,pa+size) to virtual addresses
 	// [base,base+size).  Since this is device memory and not
@@ -584,7 +598,13 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// Hint: The staff solution uses boot_map_region.
 	//
 	// Your code here:
-	panic("mmio_map_region not implemented");
+	size = ROUNDUP(size, PGSIZE);
+	boot_map_region(kern_pgdir, base, size, pa, PTE_PCD | PTE_PWT | PTE_W);
+	old_base = base;
+	base += size;
+	if (base > MMIOLIM)
+		panic("mmio_map_region overflow!");
+	return (void*)old_base;
 }
 
 static uintptr_t user_mem_check_addr;
