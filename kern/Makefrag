@@ -9,6 +9,11 @@ OBJDIRS += kern
 
 KERN_LDFLAGS := $(LDFLAGS) -T kern/kernel.ld -nostdlib
 
+
+generate_traps: generate_traps.py kern/trap.c.tmpl kern/trapentry.tmpl
+	python generate_traps.py
+
+
 # entry.S must be first, so that it's the first code in the text segment!!!
 #
 # We also snatch the use of a couple handy source files
@@ -30,7 +35,8 @@ KERN_SRCFILES :=	kern/entry.S \
 			kern/kdebug.c \
 			lib/printfmt.c \
 			lib/readline.c \
-			lib/string.c
+			lib/string.c \
+			lib/cpuid.c
 
 # Source files for LAB4
 KERN_SRCFILES +=	kern/mpentry.S \
@@ -102,7 +108,7 @@ $(OBJDIR)/kern/init.o: override KERN_CFLAGS+=$(INIT_CFLAGS)
 $(OBJDIR)/kern/init.o: $(OBJDIR)/.vars.INIT_CFLAGS
 
 # How to build the kernel itself
-$(OBJDIR)/kern/kernel: $(KERN_OBJFILES) $(KERN_BINFILES) kern/kernel.ld \
+$(OBJDIR)/kern/kernel: generate_traps $(KERN_OBJFILES) $(KERN_BINFILES) kern/kernel.ld \
 	  $(OBJDIR)/.vars.KERN_LDFLAGS
 	@echo + ld $@
 	$(V)$(LD) -o $@ $(KERN_LDFLAGS) $(KERN_OBJFILES) $(GCC_LIB) -b binary $(KERN_BINFILES)

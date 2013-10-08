@@ -24,7 +24,7 @@ struct printbuf {
 
 
 static void
-putch(int ch, struct printbuf *b)
+putch(int ch, int no_use0, int no_use1, struct printbuf *b)
 {
 	b->buf[b->idx++] = ch;
 	if (b->idx == 256-1) {
