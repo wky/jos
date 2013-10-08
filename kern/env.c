@@ -490,6 +490,7 @@ env_pop_tf(struct Trapframe *tf)
 {
 	// Record the CPU we are running on for user-space debugging
 	curenv->env_cpunum = cpunum();
+	// cprintf("About to run Env %08x on CPU %d.\n", curenv->env_id, cpunum());
 	unlock_kernel();
 	__asm __volatile("movl %0,%%esp\n"
 		"\tpopal\n"

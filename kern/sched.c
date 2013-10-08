@@ -11,7 +11,7 @@ void sched_halt(void);
 void
 sched_yield(void)
 {
-	struct Env *idle;
+	struct Env *idle, *begin;
 
 	// Implement simple round-robin scheduling.
 	//
@@ -29,7 +29,23 @@ sched_yield(void)
 	// below to halt the cpu.
 
 	// LAB 4: Your code here.
-
+	begin = curenv? curenv + 1:envs;
+	if (begin == envs + NENV)
+		begin = envs;
+	idle = begin;
+	while (idle != envs + NENV){
+		if (idle->env_status == ENV_RUNNABLE)
+			env_run(idle);
+		idle ++;
+	}
+	idle = envs;
+	while (idle != begin){
+		if (idle->env_status == ENV_RUNNABLE)
+			env_run(idle);
+		idle ++;
+	}
+	if (curenv && curenv->env_status == ENV_RUNNING)
+		env_run(curenv);
 	// sched_halt never returns
 	sched_halt();
 }
@@ -65,6 +81,7 @@ sched_halt(void)
 	xchg(&thiscpu->cpu_status, CPU_HALTED);
 
 	// Release the big kernel lock as if we were "leaving" the kernel
+	cprintf("CPU %d about to halt!\n", cpunum());
 	unlock_kernel();
 
 	// Reset stack pointer, enable interrupts and then halt.
