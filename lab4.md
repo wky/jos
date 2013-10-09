@@ -14,7 +14,7 @@ By Intel's convention, on a multiprocessor platform, only the one and only boots
     * code in `kern/mpentry.S` is linked and loaded together with all other parts of the kernel (except for the bootloader), however those instructions are copied at runtime to another physical location, so they have to discard all link/load-time assumptions. To obtain a specific physical address of a variable in relocated code & data, we need `MPBOOTPHYS`.
 
 ---
-##Ex.3&4 Per-CPU State and Initialization
+##Ex.3, 4 Per-CPU State and Initialization
 First part, setup per-CPU kernel stacks in `mem_init_mp()`, `kern/pmap.c`.
 
 * For CPU i, its kernel stack top is `KSTACKTOP - i * (KSTKSIZE + KSTKGAP)`
@@ -117,3 +117,29 @@ Up to now all exercises of part A of lab4 is complete. My version of `jos` is no
     No runnable environments in the system!
     ...
 ---
+
+##Ex.8 Setting the Page Fault Handler
+Implement `int sys_env_set_pgfault_upcall(envid_t envid, void *func)` to set the user mode page fault handler. The entry point of the handler is stored in `env->env_pgfault_upcall`.
+
+##Ex.9 Invoking the User Page Fault Handler
+To invoke the user page fault handler we must modify `page_fault_handler` in `kern/trap.c`. This function first handles kernel mode page fault. It proceeds with calling the user mode page fault handler only when all of the following conditions are met:
+
+1. The user program has already registered a page fault up call by `sys_env_set_pgfault_upcall`
+2. The user program has already allocated a page of memory for the exception stack, from VA `UXSTACKTOP-PGSIZE` to `UXSTACKTOP-1`, and the mapping permits user write.
+3. If the page fault happened while the user was processing a previous page fault, there must be enough space for the new handler's arguments on the exception stack. The stack must not overflow when new arguments are pushed.
+
+Otherwise, our kernel destroys this faulting user program.
+
+In my implementation, I switched `CR3` to the page directory of the current user program to push arguments (a `struct UTrapframe`) on it's exception stack. Also if the trap-time user stack is the exception stack itself, another 4 bytes of space is reserved on stack before the arguments.
+
+---
+
+##Ex.10, 11 User-mode Page Fault Entry Point
+The `_pgfault_upcall` routine in `lib/pfentry.S` is the one of the most sophisticated assembly code I've written in this lab. After the user defined `_pgfault_handler` returns, we must restore all general purpose registers, including stack pointer, instruction pointer and flags register to their trap-time state. The only way of transferring both control(`%eip`) and stack(`%esp`) back to the site that caused the page fault at the same time, is only achievable by pushing the trap-time `%eip` on trap-time stack, then call `ret` to hand over control.
+
+`set_pgfault_handler` is much simpler, it allocates the exception stack if is called first, registers the user mode page fault handler using `sys_env_set_pgfault_upcall`.
+
+Now my jos succeeds with `user/faultread`, `user/faultdie`, `user/faultalloc`, and `user/faultallocbad`.
+
+---
+

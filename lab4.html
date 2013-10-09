@@ -1,0 +1,380 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<style>
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote {
+    margin: 0;
+    padding: 0;
+}
+body {
+    font-family: "Helvetica Neue", Helvetica, "Hiragino Sans GB", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 18px;
+    color: #737373;
+    background-color: white;
+    margin: 10px 13px 10px 13px;
+}
+table {
+	margin: 10px 0 15px 0;
+	border-collapse: collapse;
+}
+td,th {	
+	border: 1px solid #ddd;
+	padding: 3px 10px;
+}
+th {
+	padding: 5px 10px;	
+}
+
+a {
+    color: #0069d6;
+}
+a:hover {
+    color: #0050a3;
+    text-decoration: none;
+}
+a img {
+    border: none;
+}
+p {
+    margin-bottom: 9px;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: #404040;
+    line-height: 36px;
+}
+h1 {
+    margin-bottom: 18px;
+    font-size: 30px;
+}
+h2 {
+    font-size: 24px;
+}
+h3 {
+    font-size: 18px;
+}
+h4 {
+    font-size: 16px;
+}
+h5 {
+    font-size: 14px;
+}
+h6 {
+    font-size: 13px;
+}
+hr {
+    margin: 0 0 19px;
+    border: 0;
+    border-bottom: 1px solid #ccc;
+}
+blockquote {
+    padding: 13px 13px 21px 15px;
+    margin-bottom: 18px;
+    font-family:georgia,serif;
+    font-style: italic;
+}
+blockquote:before {
+    content:"\201C";
+    font-size:40px;
+    margin-left:-10px;
+    font-family:georgia,serif;
+    color:#eee;
+}
+blockquote p {
+    font-size: 14px;
+    font-weight: 300;
+    line-height: 18px;
+    margin-bottom: 0;
+    font-style: italic;
+}
+code, pre {
+    font-family: Monaco, Andale Mono, Courier New, monospace;
+}
+code {
+    /*background-color: #fee9cc;*/
+    color: rgba(0, 0, 0, 0.75);
+    padding: 1px 3px;
+    font-size: 12px;
+    -webkit-border-radius: 3px;
+    -moz-border-radius: 3px;
+    border-radius: 3px;
+}
+pre {
+    display: block;
+    padding: 14px;
+    margin: 0 0 18px;
+    line-height: 16px;
+    font-size: 11px;
+    border: 1px solid #d9d9d9;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code {
+    background-color: #fff;
+    color:#737373;
+    font-size: 11px;
+    padding: 0;
+}
+sup {
+    font-size: 0.83em;
+    vertical-align: super;
+    line-height: 0;
+}
+* {
+	-webkit-print-color-adjust: exact;
+}
+@media screen and (min-width: 914px) {
+    body {
+        width: 854px;
+        margin:10px auto;
+    }
+}
+@media print {
+	body,code,pre code,h1,h2,h3,h4,h5,h6 {
+		color: black;
+	}
+	table, pre {
+		page-break-inside: avoid;
+	}
+}
+</style>
+<title>MIT JOS Lab 4 Report</title>
+
+</head>
+<body>
+<h1>MIT JOS Lab 4 Report</h1>
+
+<p><strong>YANG Weikun 1100012442</strong></p>
+
+<h2>Ex.1 Multiprocessor support</h2>
+
+<p><code>mmio_map_region</code> in <code>kern/pmap.c</code> would map page-aligned physical memory at a very high address (0xFE000000) that VM from <code>KERNBASE</code> cannot reach (over 256MB), to virtual address reserved in <code>[MMIOBASE, MMIOLIM)</code>. I called <code>boot_map_region</code> with cache-disabled, write-through and kernel-write permissions.</p>
+
+<hr />
+
+<h2>Ex.2 Application Processor Bootstrap</h2>
+
+<p>By Intel's convention, on a multiprocessor platform, only the one and only bootstrap processor (BP) is started by the BIOS. We must start up other existing processors (Application processors) to utilise SMP, by emitting <em>'Inter Processor Interrupt'</em>(IPI) to each and every other processor cores. Start up code for APs is in <code>kern/mpentry.S</code>, copied to a predefined memory location before sending IPI to APs. That memory page must not appear in <code>page_free_list</code>, so <code>page_init()</code> in <code>kern/pmap.c</code> is updated to fit the change.</p>
+
+<h3>Q&amp;A</h3>
+
+<ol>
+<li><em>Why is the macro <code>MPBOOTPHYS</code> necessary in kern/mpentry.S but not in boot/boot.S?</em>
+
+<ul>
+<li>code in <code>kern/mpentry.S</code> is linked and loaded together with all other parts of the kernel (except for the bootloader), however those instructions are copied at runtime to another physical location, so they have to discard all link/load-time assumptions. To obtain a specific physical address of a variable in relocated code &amp; data, we need <code>MPBOOTPHYS</code>.</li>
+</ul>
+</li>
+</ol>
+
+
+<hr />
+
+<h2>Ex.3, 4 Per-CPU State and Initialization</h2>
+
+<p>First part, setup per-CPU kernel stacks in <code>mem_init_mp()</code>, <code>kern/pmap.c</code>.</p>
+
+<ul>
+<li>For CPU i, its kernel stack top is <code>KSTACKTOP - i * (KSTKSIZE + KSTKGAP)</code></li>
+</ul>
+
+
+<p>Second part, setup per-CPU TSS in <code>trap_init_percpu()</code>, <code>kern/trap.c</code>.</p>
+
+<ul>
+<li>For CPU i, its TSS is <code>cpus[i].cpu_ts</code>, and the corresponding descriptor in GDT is <code>gdt[(GD_TSS0 &gt;&gt; 3)+i]</code></li>
+</ul>
+
+
+<p>Now when <code>jos</code> is started with <code>make qemu CPUS=4</code> it shows:</p>
+
+<pre><code>6828 decimal is 15254 octal!
+Physical memory: 66556K available, base = 640K, extended = 65532K
+check_page_alloc() succeeded!
+check_page() succeeded!
+check_kern_pgdir() succeeded!
+check_page_installed_pgdir() succeeded!
+SMP: CPU 0 found 4 CPU(s)
+enabled interrupts: 1 2
+SMP: CPU 1 starting
+SMP: CPU 2 starting
+SMP: CPU 3 starting
+...
+</code></pre>
+
+<hr />
+
+<h2>Ex.5 Locking</h2>
+
+<p>The <em>Big Kernel Lock</em> is obtained at defined places, and release just before the <code>asm volatile(...)</code> statement in <code>env_pop_tf</code>.</p>
+
+<h3>Q&amp;A</h3>
+
+<ol>
+<li><em>Why do we still need separate kernel stacks for each CPU despite the 'Big Kernel Lock'?</em>
+
+<ul>
+<li>Because, when a interrupt occurs in user mode, the CPU will push <code>EIP</code>, <code>CS</code> etc. on stack by hardware, without acquiring a lock. In case another CPU is running in kernel mode, the shared stack will be corrupted.</li>
+</ul>
+</li>
+</ol>
+
+
+<hr />
+
+<h2>Ex.6 Round-Robin Scheduling</h2>
+
+<p>Before making this part of the lab work nicely, I had to write a fake timer interrupt handler in <code>trap_dispatch()</code>. Somehow timer interrupts are enabled.</p>
+
+<p>For function <code>schedule_yield()</code>, we must check circularly in the <code>envs</code> array for the first <code>Env</code> with status of <code>ENV_RUNNABLE</code>, starting from <code>curenv</code> if it exists, or beginning of the array if not. If no candidate was found then <code>curenv</code> may be scheduled again. Then we call <code>env_run()</code> to drop to selected user program, or drop to <code>schedule_halt()</code> that shuts down the CPU. Next we need to dispatch <code>sys_yield</code> system call.</p>
+
+<p>This is what I get on a 4-CPU system running 6 <code>user_yield</code> instances:</p>
+
+<pre><code>[00000000] new env 00001000
+...
+[00000000] new env 00001005
+Hello, I am environment 00001000.
+Hello, I am environment 00001002.
+...
+Back in environment 00001000, iteration 0.
+Back in environment 00001002, iteration 0.
+Hello, I am environment 00001005.
+Back in environment 00001001, iteration 0.
+...
+Back in environment 00001001, iteration 4.
+Back in environment 00001004, iteration 3.
+All done in environment 00001000.
+...
+[00001000] exiting gracefully
+[00001000] free env 00001000
+...
+Back in environment 00001005, iteration 3.
+...
+All done in environment 00001004.
+Back in environment 00001005, iteration 4.
+[00001003] exiting gracefully
+...   
+No runnable environments in the system!
+</code></pre>
+
+<h3>Q&amp;A</h3>
+
+<ol>
+<li><em>Why can the pointer <code>e</code> be dereferenced both before and after the addressing switch?</em>
+
+<ul>
+<li>Most of the pointers used in kernel points to somewhere above <code>KERNBASE</code> (virtual mem), recall that all user memory spaces are identical to kernel memory space for VA above <code>KERNBASE</code>, therefore it is OK to address something in kernel space using a user environment's page directory.</li>
+</ul>
+</li>
+<li><em>Whenever the kernel switches from one environment to another, it must ensure the old environment's registers are saved so they can be restored properly later. Why? Where does this happen?</em>
+
+<ul>
+<li>Such context switch, in our current Round-Robin scheduling, may happen only when:
+
+<ul>
+<li>A process gives itself up to the kernel by making the <code>yield</code> system call.</li>
+<li>An interrupt of any other kind occurs. (For some cases the interrupted process may not resume)</li>
+</ul>
+</li>
+<li>In both cases, process states are saved by our interrupt mechanism, details explained in the previous lab.</li>
+</ul>
+</li>
+</ol>
+
+
+<hr />
+
+<h2>Ex.7 System Calls for Environment Creation</h2>
+
+<p>There are 5 new system calls to be implemented, to support dumb fork (copy-on initilize).</p>
+
+<ol>
+<li><code>envid_t sys_exofork(void)</code> create a new <code>Env</code> using <code>env_alloc()</code>, set its status to <code>ENV_NOT_RUNNABLE</code> and copy the trap frame from the calling <code>Env</code> to this new <code>Env</code>. To later return <code>0</code> to the child, we must set <code>eax</code> register in the trap frame explicitly.</li>
+<li><code>int sys_env_set_status(envid_t envid, int status)</code> find the <code>Env</code> with <code>envid</code>, and set it's status to <code>ENV_NOT_RUNNABLE</code> or <code>ENV_RUNNABLE</code>.</li>
+<li><code>int sys_page_alloc(envid_t envid, void *va, int perm)</code> this one is slightly more complex. We must ensure the existence of <code>envid</code> and the validity of <code>va</code> and <code>perm</code>. Then we allocate a physical page and insert it into the <code>Env</code>'s VM.</li>
+<li><code>int sys_page_map(envid_t srcenvid, void *srcva, envid_t dstenvid, void *dstva, int perm)</code> this is a syscall that copies memory mappings between different <code>Env</code>s. Like the previous one, but a lot more to verify. <code>page_lookup</code> is called to find the original mapping, then <code>page_insert</code> is called to setup the new mapping to the same physical location.</li>
+<li><code>int sys_page_unmap(envid_t envid, void *va)</code> We use <code>page_remove</code> to do the job.</li>
+</ol>
+
+
+<p>Up to now all exercises of part A of lab4 is complete. My version of <code>jos</code> is now able to run <code>user/dumbfork</code> correctly (on 2 CPUs):</p>
+
+<pre><code>[00000000] new env 00001000
+[00001000] new env 00001001
+0: I am the parent!
+0: I am the child!
+...
+...
+9: I am the parent!
+9: I am the child!
+[00001000] exiting gracefully
+[00001000] free env 00001000
+10: I am the child!
+...
+19: I am the child!
+[00001001] exiting gracefully
+[00001001] free env 00001001
+No runnable environments in the system!
+...
+</code></pre>
+
+<hr />
+
+<h2>Ex.8 Setting the Page Fault Handler</h2>
+
+<p>Implement <code>int sys_env_set_pgfault_upcall(envid_t envid, void *func)</code> to set the user mode page fault handler. The entry point of the handler is stored in <code>env-&gt;env_pgfault_upcall</code>.</p>
+
+<h2>Ex.9 Invoking the User Page Fault Handler</h2>
+
+<p>To invoke the user page fault handler we must modify <code>page_fault_handler</code> in <code>kern/trap.c</code>. This function first handles kernel mode page fault. It proceeds with calling the user mode page fault handler only when all of the following conditions are met:</p>
+
+<ol>
+<li>The user program has already registered a page fault up call by <code>sys_env_set_pgfault_upcall</code></li>
+<li>The user program has already allocated a page of memory for the exception stack, from VA <code>UXSTACKTOP-PGSIZE</code> to <code>UXSTACKTOP-1</code>, and the mapping permits user write.</li>
+<li>If the page fault happened while the user was processing a previous page fault, there must be enough space for the new handler's arguments on the exception stack. The stack must not overflow when new arguments are pushed.</li>
+</ol>
+
+
+<p>Otherwise, our kernel destroys this faulting user program.</p>
+
+<p>In my implementation, I switched <code>CR3</code> to the page directory of the current user program to push arguments (a <code>struct UTrapframe</code>) on it's exception stack. Also if the trap-time user stack is the exception stack itself, another 4 bytes of space is reserved on stack before the arguments.</p>
+
+<hr />
+
+<h2>Ex.10, 11 User-mode Page Fault Entry Point</h2>
+
+<p>The <code>_pgfault_upcall</code> routine in <code>lib/pfentry.S</code> is the one of the most sophisticated assembly code I've written in this lab. After the user defined <code>_pgfault_handler</code> returns, we must restore all general purpose registers, including stack pointer, instruction pointer and flags register to their trap-time state. The only way of transferring both control(<code>%eip</code>) and stack(<code>%esp</code>) back to the site that caused the page fault at the same time, is only achievable by pushing the trap-time <code>%eip</code> on trap-time stack, then call <code>ret</code> to hand over control.</p>
+
+<table>
+<thead>
+<tr>
+<th>asd </th>
+<th> asd </th>
+<th> asd</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a   </td>
+<td> 2   </td>
+<td> asd</td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>
