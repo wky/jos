@@ -1,7 +1,7 @@
 #include <inc/mmu.h>
 #include <inc/x86.h>
 #include <inc/assert.h>
-
+#include <inc/string.h>
 #include <kern/pmap.h>
 #include <kern/trap.h>
 #include <kern/console.h>
@@ -285,7 +285,7 @@ void
 page_fault_handler(struct Trapframe *tf)
 {
 	uint32_t fault_va;
-
+	uint32_t *exstack_addr;
 	// Read processor's CR2 register to find the faulting address
 	fault_va = rcr2();
 
@@ -327,8 +327,36 @@ page_fault_handler(struct Trapframe *tf)
 	//   (the 'tf' variable points at 'curenv->env_tf').
 
 	// LAB 4: Your code here.
-
+	if (curenv->env_pgfault_upcall == NULL)
+		goto page_fault_destroy_env;
+	user_mem_assert(curenv, (void*)(UXSTACKTOP - PGSIZE), PGSIZE, PTE_W);
+	// check if already on exception stack
+	if (tf->tf_esp > UXSTACKTOP - PGSIZE){
+		// check if about to overflow the excetion stack
+		if (tf->tf_esp - 4 * 6 - sizeof(struct PushRegs) <= UXSTACKTOP - PGSIZE)
+			goto page_fault_destroy_env;
+		// reserve 4 bytes.
+		exstack_addr = (uint32_t*)(tf->tf_esp - 4);
+	}else
+		exstack_addr = (uint32_t*)UXSTACKTOP;
+	// in user space
+	lcr3(PADDR(curenv->env_pgdir));
+	// push trap-time esp, eflags, saved registers etc.
+	// to construct struct UTrapframe
+	*(--exstack_addr) = tf->tf_esp;
+	*(--exstack_addr) = tf->tf_eflags;
+	*(--exstack_addr) = tf->tf_eip;
+	exstack_addr -= sizeof(struct PushRegs)/sizeof(uint32_t);
+	memcpy(exstack_addr, &(tf->tf_regs), sizeof(struct PushRegs));
+	*(--exstack_addr) = tf->tf_err;
+	*(--exstack_addr) = fault_va;
+	// set sp, ip and drop to user program
+	memset(&(tf->tf_regs), 0, sizeof(struct PushRegs));
+	tf->tf_esp = (uint32_t)exstack_addr;
+	tf->tf_eip = (uint32_t)curenv->env_pgfault_upcall;
+	env_run(curenv);
 	// Destroy the environment that caused the fault.
+page_fault_destroy_env:
 	cprintf("[%08x] user fault va %08x ip %08x\n",
 		curenv->env_id, fault_va, tf->tf_eip);
 	print_trapframe(tf);
