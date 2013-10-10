@@ -160,6 +160,9 @@ sup {
 
 <p><strong>YANG Weikun 1100012442</strong></p>
 
+<p>All exercises finished on Thu 10th Oct 22:30 UTC+0800<br/>
+Code quoting is reduced, as I mentioned in lab2 report.</p>
+
 <h2>Ex.1 Multiprocessor support</h2>
 
 <p><code>mmio_map_region</code> in <code>kern/pmap.c</code> would map page-aligned physical memory at a very high address (0xFE000000) that VM from <code>KERNBASE</code> cannot reach (over 256MB), to virtual address reserved in <code>[MMIOBASE, MMIOLIM)</code>. I called <code>boot_map_region</code> with cache-disabled, write-through and kernel-write permissions.</p>
@@ -475,5 +478,58 @@ No runnable environments in the system!
 <p>Part B of lab4 is complete.</p>
 
 <hr />
+
+<h2>Ex.13, 14 Clock Interrupts and Preemption</h2>
+
+<p>IDT entries are already fully setup in the previous lab, using <code>generate_traps.py</code>. To allow user programs to accept interrupts, <code>FL_IF</code> flag in <code>flags</code> must be set in <code>env_alloc()</code>. Then when a clock interrupt <code>IRQ_OFFSET + IRQ_TIME</code> enters the trap dispatcher, we should first acknowledge it by <code>lapic_eoi()</code>, then call the scheduler <code>schedule_yield()</code> to enable preemption.</p>
+
+<hr />
+
+<h2>Ex.15 Implementing IPC</h2>
+
+<p>Having all the previous work in help, IPC becomes pretty easy to implement. Our IPC mechanism supports the sender to send a 4-byte word to the receiver, optionally sharing a page of memory between. Four of the core functions:</p>
+
+<ol>
+<li>In kernel space (system calls):
+
+<ol type="a">
+<li><code>int sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)</code> this function will try to locate a Env with <code>envid</code>, send the value to it only if the selected Env bas called <code>sys_ipc_recv</code> already to receive the value. If <code>srcva</code> and <code>perm</code> are meaningful, and that the receiver allowed shared mapping to be made, a page of memory from the sender at address <code>srcva</code> would be mapped to <code>dstva</code> of the receiver. This system call does not wait for the receiver to be ready, so the library wrapper must retry infinitely waiting for the receiver. This function must change the receiver to runnable state, and clear the <code>env_ipc_recving</code> flag after the message was sent.</li>
+<li><code>int sys_ipc_recv(void *dstva)</code> A processing expecting a message from another process will call this function, to mark itself ready. This function does not return until the message is received.</li>
+</ol>
+</li>
+<li>In user space (library calls):
+
+<ol type="a">
+<li><code>void ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)</code> a library function that repeatedly calls <code>sys_ipc_try_send</code> to send a message to another process. This function would <code>panic</code> if the provided arguments are illegal.</li>
+<li><code>int32_t ipc_recv(envid_t *from_env_store, void *pg, int *perm_store)</code> this wrapper calls <code>sys_ipc_recv</code>, upon return, it fills <code>from_env_store</code> and <code>perm_store</code> if necessary, then return the received 4-byte message to the caller.</li>
+</ol>
+</li>
+</ol>
+
+
+<hr />
+
+<h2>Final testing:</h2>
+
+<p>Now all exercises are complete, moving on to testing:</p>
+
+<ol>
+<li><p>My output for <code>user/badhandler</code> and <code>user/evilhandler</code> tests was different from the expected. After carefully reading this piece of comment in <code>kern/trap.c</code>:</p>
+
+<pre><code> // Note that the grade script assumes you will first check for the page
+ // fault upcall and print the "user fault va" message below if there is
+ // none.  The remaining three checks can be combined into a single test.
+</code></pre>
+
+<p>So in <code>page_fault_handler</code>, we must check both the existence and validity of user's page fault handler (using <code>user_mem_assert</code>) before other things, to make the grading script happy.</p></li>
+<li><code>user/primes</code> not behaving correctly. Later I realised this was caused by a faulty <code>sys_ipc_try_send</code> that does not clear the receiver's <code>env_ipc_recving</code> flag after successfully transferring the message. When I fixed this, the maximum prime number <code>user/primes</code> calculated was <code>8147</code>, by the 5120th process, afterwards <code>fork</code> failed because the OS ran out of memory.</li>
+</ol>
+
+
+<hr />
+
+<p><strong>Now All exercises of Lab4 are done, all tests passed.</strong></p>
+
+<p><strong>Challenges' solution will be appended later. Moving on to lab 5 first.</strong></p>
 </body>
 </html>

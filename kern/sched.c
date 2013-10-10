@@ -81,7 +81,7 @@ sched_halt(void)
 	xchg(&thiscpu->cpu_status, CPU_HALTED);
 
 	// Release the big kernel lock as if we were "leaving" the kernel
-	cprintf("CPU %d about to halt!\n", cpunum());
+	// cprintf("CPU %d about to halt!\n", cpunum());
 	unlock_kernel();
 
 	// Reset stack pointer, enable interrupts and then halt.

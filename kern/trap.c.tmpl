@@ -193,7 +193,8 @@ trap_dispatch(struct Trapframe *tf)
             	tf->tf_regs.reg_edi, tf->tf_regs.reg_esi);
 			return;
 		case IRQ_OFFSET + IRQ_TIMER:
-			return;
+			lapic_eoi();
+			sched_yield();
 		default:
 			break;
 	}
@@ -328,14 +329,17 @@ page_fault_handler(struct Trapframe *tf)
 	//   (the 'tf' variable points at 'curenv->env_tf').
 
 	// LAB 4: Your code here.
-	if (curenv->env_pgfault_upcall == NULL)
-		goto page_fault_destroy_env;
+	// if (curenv->env_pgfault_upcall == NULL)
+	// 	goto page_fault_destroy_env;
+	user_mem_assert(curenv, (void*)curenv->env_pgfault_upcall, 0,  0);
 	user_mem_assert(curenv, (void*)(UXSTACKTOP - PGSIZE), PGSIZE, PTE_W);
 	// check if already on exception stack
 	if (tf->tf_esp > UXSTACKTOP - PGSIZE){
 		// check if about to overflow the excetion stack
-		if (tf->tf_esp - 4 * 6 - sizeof(struct PushRegs) <= UXSTACKTOP - PGSIZE)
+		if (tf->tf_esp - 4 * 6 - sizeof(struct PushRegs) <= UXSTACKTOP - PGSIZE){
+			cprintf("[%08x] user exception stack overflow!\n");
 			goto page_fault_destroy_env;
+		}
 		// reserve 4 bytes.
 		exstack_addr = (uint32_t*)(tf->tf_esp - 4);
 	}else
