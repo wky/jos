@@ -2,6 +2,8 @@
 
 __YANG Weikun 1100012442__
 
+All exercises finished on Thu 10th Oct 22:30 UTC+0800  
+Code quoting is reduced, as I mentioned in lab2 report.
 ##Ex.1 Multiprocessor support
 `mmio_map_region` in `kern/pmap.c` would map page-aligned physical memory at a very high address (0xFE000000) that VM from `KERNBASE` cannot reach (over 256MB), to virtual address reserved in `[MMIOBASE, MMIOLIM)`. I called `boot_map_region` with cache-disabled, write-through and kernel-write permissions.
 
@@ -225,3 +227,35 @@ Now our COW-fork mechanism is rather complete, moving on to testing `user/forktr
 Part B of lab4 is complete.
 
 ---
+##Ex.13, 14 Clock Interrupts and Preemption
+IDT entries are already fully setup in the previous lab, using `generate_traps.py`. To allow user programs to accept interrupts, `FL_IF` flag in `flags` must be set in `env_alloc()`. Then when a clock interrupt `IRQ_OFFSET + IRQ_TIME` enters the trap dispatcher, we should first acknowledge it by `lapic_eoi()`, then call the scheduler `schedule_yield()` to enable preemption.
+
+---
+##Ex.15 Implementing IPC
+Having all the previous work in help, IPC becomes pretty easy to implement. Our IPC mechanism supports the sender to send a 4-byte word to the receiver, optionally sharing a page of memory between. Four of the core functions:
+
+1. In kernel space (system calls):
+    a. `int sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)` this function will try to locate a Env with `envid`, send the value to it only if the selected Env bas called `sys_ipc_recv` already to receive the value. If `srcva` and `perm` are meaningful, and that the receiver allowed shared mapping to be made, a page of memory from the sender at address `srcva` would be mapped to `dstva` of the receiver. This system call does not wait for the receiver to be ready, so the library wrapper must retry infinitely waiting for the receiver. This function must change the receiver to runnable state, and clear the `env_ipc_recving` flag after the message was sent.
+    b. `int sys_ipc_recv(void *dstva)` A processing expecting a message from another process will call this function, to mark itself ready. This function does not return until the message is received.
+2. In user space (library calls):
+    a. `void ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)` a library function that repeatedly calls `sys_ipc_try_send` to send a message to another process. This function would `panic` if the provided arguments are illegal.
+    b. `int32_t ipc_recv(envid_t *from_env_store, void *pg, int *perm_store)` this wrapper calls `sys_ipc_recv`, upon return, it fills `from_env_store` and `perm_store` if necessary, then return the received 4-byte message to the caller.    
+    
+---
+
+##Final testing:
+Now all exercises are complete, moving on to testing:
+
+1. My output for `user/badhandler` and `user/evilhandler` tests was different from the expected. After carefully reading this piece of comment in `kern/trap.c`:
+
+        // Note that the grade script assumes you will first check for the page
+        // fault upcall and print the "user fault va" message below if there is
+        // none.  The remaining three checks can be combined into a single test.
+So in `page_fault_handler`, we must check both the existence and validity of user's page fault handler (using `user_mem_assert`) before other things, to make the grading script happy.
+2. `user/primes` not behaving correctly. Later I realised this was caused by a faulty `sys_ipc_try_send` that does not clear the receiver's `env_ipc_recving` flag after successfully transferring the message. When I fixed this, the maximum prime number `user/primes` calculated was `8147`, by the 5120th process, afterwards `fork` failed because the OS ran out of memory. 
+
+---
+
+**Now All exercises of Lab4 are done, all tests passed.**
+
+**Challenges' solution will be appended later. Moving on to lab 5 first.**

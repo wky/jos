@@ -1,5 +1,5 @@
 #include <inc/lib.h>
-
+#define N_ENV 50
 volatile int counter;
 
 void
@@ -10,10 +10,10 @@ umain(int argc, char **argv)
 	envid_t parent = sys_getenvid();
 
 	// Fork several environments
-	for (i = 0; i < 20; i++)
+	for (i = 0; i < N_ENV; i++)
 		if (fork() == 0)
 			break;
-	if (i == 20) {
+	if (i == N_ENV) {
 		sys_yield();
 		return;
 	}
