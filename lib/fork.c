@@ -25,17 +25,24 @@ pgfault(struct UTrapframe *utf)
 	//   (see <inc/memlayout.h>).
 
 	// LAB 4: Your code here.
-
+	if (!(err & FEC_WR) 
+		|| !(uvpd[PDX(addr)] & PTE_P) 
+		|| !(uvpt[PGNUM(addr)] & PTE_COW))
+		panic("user page fault: va %p err 0x%08x", addr, err);
 	// Allocate a new page, map it at a temporary location (PFTEMP),
 	// copy the data from the old page to the new page, then move the new
 	// page to the old page's address.
 	// Hint:
 	//   You should make three system calls.
 	//   No need to explicitly delete the old page's mapping.
-
 	// LAB 4: Your code here.
-
-	panic("pgfault not implemented");
+	if ((r = sys_page_alloc(0, (void*)PFTEMP, PTE_P | PTE_W | PTE_U)) < 0)
+		panic("pgfault: %e", r);
+	addr = ROUNDDOWN(addr, PGSIZE);
+	memcpy((void*)PFTEMP, addr, PGSIZE);
+	if ((r = sys_page_map(0, (void*)PFTEMP, 0, addr, PTE_P | PTE_W | PTE_U)) < 0
+		|| (r = sys_page_unmap(0, (void*)PFTEMP)) < 0)
+		panic("pgfault: %e", r);
 }
 
 //
@@ -53,10 +60,15 @@ static int
 duppage(envid_t envid, unsigned pn)
 {
 	int r;
-
 	// LAB 4: Your code here.
-	panic("duppage not implemented");
-	return 0;
+	void *va = (void*)(pn<<PGSHIFT);
+	if (uvpt[pn] & PTE_W || uvpt[pn] & PTE_COW){
+		r = sys_page_map(0, va, envid, va, PTE_P | PTE_U | PTE_COW);
+		if (r) return r;
+		r = sys_page_map(0, va, 0, va, PTE_P | PTE_U | PTE_COW);
+	}else
+		r = sys_page_map(0, va, envid, va, PTE_P | PTE_U);
+	return r;
 }
 
 //
@@ -79,7 +91,35 @@ envid_t
 fork(void)
 {
 	// LAB 4: Your code here.
-	panic("fork not implemented");
+	envid_t envid;
+	int ret;
+	set_pgfault_handler(pgfault);
+	envid = sys_exofork();
+	if (envid < 0)
+		return envid;
+	if (!envid){
+		// child
+		thisenv = &envs[ENVX(sys_getenvid())];
+		return 0;
+	}
+	// parent
+	// scan through the address space
+	int pgnum;
+	for (pgnum = 0; pgnum < PGNUM(UXSTACKTOP-PGSIZE); ++pgnum){
+		if (!(uvpd[pgnum>>(PDXSHIFT-PTXSHIFT)] & PTE_P) || !(uvpt[pgnum] & PTE_P))
+			continue;	// skip empty entries
+		if ((ret = duppage(envid, pgnum)) < 0)
+			return ret;
+	}
+	
+	// allocate child's exception stack and pag fault handler
+	if ((ret = sys_page_alloc(envid, (void*)(UXSTACKTOP-PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
+		return ret;
+	extern void _pgfault_upcall (void);
+	sys_env_set_pgfault_upcall(envid, _pgfault_upcall);
+	if ((ret = sys_env_set_status(envid, ENV_RUNNABLE)) < 0)
+		return ret;
+	return envid;
 }
 
 // Challenge!

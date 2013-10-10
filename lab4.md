@@ -135,7 +135,24 @@ In my implementation, I switched `CR3` to the page directory of the current user
 ---
 
 ##Ex.10, 11 User-mode Page Fault Entry Point
-The `_pgfault_upcall` routine in `lib/pfentry.S` is the one of the most sophisticated assembly code I've written in this lab. After the user defined `_pgfault_handler` returns, we must restore all general purpose registers, including stack pointer, instruction pointer and flags register to their trap-time state. The only way of transferring both control(`%eip`) and stack(`%esp`) back to the site that caused the page fault at the same time, is only achievable by pushing the trap-time `%eip` on trap-time stack, then call `ret` to hand over control.
+The `_pgfault_upcall` routine in `lib/pfentry.S` is the one of the most sophisticated assembly code I've written in this lab. After the user defined `_pgfault_handler` returns, we must restore all general purpose registers, including stack pointer, instruction pointer and flags register to their trap-time state. The only way of transferring both control(`%eip`) and stack(`%esp`) back to the site that caused the page fault at the same time, is only achievable by pushing the trap-time `%eip` on trap-time stack, then call `ret` to hand over control. I would like to quote a bit of the code for clarity:
+
+    _pgfault_upcall:
+	pushl %esp        // function argument: pointer to UTF
+	movl _pgfault_handler, %eax
+	call *%eax        // doing this because near jump does not support imm32
+	addl $4, %esp     // pop function argument
+	addl $8, %esp       // pop utf_fault_va and utf_err off the stack
+	movl 32(%esp), %eax // load the trap-time %eip to %eax
+	subl $4, 40(%esp)   // decrease the trap-time %esp by 4, load to %ebx
+	// this is neccesary because i386 does not support `write to pointor in memory`
+	movl 40(%esp), %ebx
+	movl %eax, (%ebx)   // store the trap-time %eip to (adjusted) trap-time stacktop
+	popal        // restore the trap-time registers.
+	addl $4, %esp	    // pop the eip
+	popfl        // restore eflags from the stack.
+	popl %esp    // switch back to the adjusted trap-time stack.
+	ret          // return to re-execute the instruction that faulted.
 
 `set_pgfault_handler` is much simpler, it allocates the exception stack if is called first, registers the user mode page fault handler using `sys_env_set_pgfault_upcall`.
 
@@ -143,3 +160,68 @@ Now my jos succeeds with `user/faultread`, `user/faultdie`, `user/faultalloc`, a
 
 ---
 
+##Ex.12 Implementing Copy-on-Write Fork
+Things to do in `fork()` to support COW:
+
+1. Register parent process's page fault handler: `pgfault()` (later implemented).
+2. Call `sys_exofork()` to create a new Env. Depending on the return value, code path splits:
+    * `sys_exofork()`'s return value is 0, we are the child process. Actually this system call will not return immediately in child like normal linux `fork` that might introduce race conditions, until the parent process explicitly sets the child's status, and the kernel reschedules. After `sys_exofork` returns we must fix `thisenv` to point to the right Env, since the old `thisenv` is inherited from the parent.
+    * `sys_exofork()`'s return value is a positive integer, which means that the system call succeeded and we are now in the parent process. Quite a lot of things to be done for the child process:
+        a. First, scan through the parent process's virtual address space from `0` to `UXSTACKTOP-PGSIZE`, copy every existing mapping using `duppage()` (implemented later).
+        b. Allocate child's exception stack, by `sys_page_alloc`.
+        c. Register a page fault handler for the child using `sys_env_set_pgfault_upcall`. Here we cannot use the user mode function `set_pgfault_handler` because it can only do things for the current process.
+        d. Make the child process runnable by `sys_env_set_status`.
+
+        The order of those things is rather important: we must register a page fault handler before the child is marked runnable. Otherwise if later we use a preemptive multiprocessing strategy, the child might start running on copy-on-write memory without a page fault handler.
+    * sys_exofork()'s return value is a negative integer, which indicates failure.
+
+    In all three cases, I chose not to `panic` on exceptional conditions, just delegate the return value to the caller of `fork` instead.
+
+Now we move on to the COW mapping-transferring function `duppage()`:
+
+* For a virtual page that is originally mapped writable or copy-on-write, we map the page in both parent and child with COW permissions.
+    * Why is it necessary to map in the parent those COW pages again?
+        * no idea
+* For a virtual page that is originally read-only, we map the page in the child read-only as well.
+* In case of any system call failure, `duppage()` will not panic but return the error code to the caller function.
+
+Next, the core of COW : page fault handler `pgfault()`
+
+* `pgfault` first checks that the fault was caused by write to COW location. Otherwise it raise a `panic`. In a more realistic scene, `pgfault()` could delegate the 'otherwise' to another general page fault handler.
+* Then, `pgfault` allocate a new page at `PFTEMP`, map it to the faulting location (rounded down to nearest page boundary) with user-write permission, then undo the mapping at `PFTEMP`.
+
+Now our COW-fork mechanism is rather complete, moving on to testing `user/forktree` on single CPU (I modified the fork depth to 2):
+
+    [00000000] new env 00001000
+    1000: I am ''
+    [00001000] new env 00001001
+    [00001000] new env 00001002
+    [00001000] exiting gracefully
+    [00001000] free env 00001000
+    1001: I am '0'
+    [00001001] new env 00002000
+    [00001001] new env 00001003
+    [00001001] exiting gracefully
+    [00001001] free env 00001001
+    2000: I am '00'
+    [00002000] exiting gracefully
+    [00002000] free env 00002000
+    1002: I am '1'
+    [00001002] new env 00003000
+    [00001002] new env 00002001
+    [00001002] exiting gracefully
+    [00001002] free env 00001002
+    3000: I am '10'
+    [00003000] exiting gracefully
+    [00003000] free env 00003000
+    2001: I am '11'
+    [00002001] exiting gracefully
+    [00002001] free env 00002001
+    1003: I am '01'
+    [00001003] exiting gracefully
+    [00001003] free env 00001003
+    No runnable environments in the system!
+    
+Part B of lab4 is complete.
+
+---

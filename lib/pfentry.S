@@ -69,11 +69,11 @@ _pgfault_upcall:
 	addl $8, %esp
 	// load the trap-time %eip to %eax
 	movl 32(%esp), %eax
-	// load the trap-time %esp to %ebx, decrease by 4, write back
+	// decrease the trap-time %esp by 4, load to %ebx
+	subl $4, 40(%esp)
+	// this is neccesary because i386 does not support `write to pointor in memory`
 	movl 40(%esp), %ebx
-	subl $4, %ebx
-	movl %ebx, 40(%esp)
-	// store the trap-time %eip to trap-time stacktop
+	// store the trap-time %eip to (adjusted) trap-time stacktop
 	movl %eax, (%ebx)
 	// Restore the trap-time registers.  After you do this, you
 	// can no longer modify any general-purpose registers.
