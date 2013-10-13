@@ -13,6 +13,9 @@ Note from lab3:
 3. Github's markdown syntax is slightly different from my markdown editor.
    Please see lab*.html for better effects.
 
-
 Note from lab4:
 1. `make grade` might timeout. gonna check that later.
+
+Note from lab5:
+1. some test programs ends with a breakpoint exception. Is that normal?
+   their behaviours are correct.
