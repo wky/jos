@@ -1,0 +1,238 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<style>
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote {
+    margin: 0;
+    padding: 0;
+}
+body {
+    font-family: "Helvetica Neue", Helvetica, "Hiragino Sans GB", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 18px;
+    color: #737373;
+    background-color: white;
+    margin: 10px 13px 10px 13px;
+}
+table {
+	margin: 10px 0 15px 0;
+	border-collapse: collapse;
+}
+td,th {	
+	border: 1px solid #ddd;
+	padding: 3px 10px;
+}
+th {
+	padding: 5px 10px;	
+}
+
+a {
+    color: #0069d6;
+}
+a:hover {
+    color: #0050a3;
+    text-decoration: none;
+}
+a img {
+    border: none;
+}
+p {
+    margin-bottom: 9px;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: #404040;
+    line-height: 36px;
+}
+h1 {
+    margin-bottom: 18px;
+    font-size: 30px;
+}
+h2 {
+    font-size: 24px;
+}
+h3 {
+    font-size: 18px;
+}
+h4 {
+    font-size: 16px;
+}
+h5 {
+    font-size: 14px;
+}
+h6 {
+    font-size: 13px;
+}
+hr {
+    margin: 0 0 19px;
+    border: 0;
+    border-bottom: 1px solid #ccc;
+}
+blockquote {
+    padding: 13px 13px 21px 15px;
+    margin-bottom: 18px;
+    font-family:georgia,serif;
+    font-style: italic;
+}
+blockquote:before {
+    content:"\201C";
+    font-size:40px;
+    margin-left:-10px;
+    font-family:georgia,serif;
+    color:#eee;
+}
+blockquote p {
+    font-size: 14px;
+    font-weight: 300;
+    line-height: 18px;
+    margin-bottom: 0;
+    font-style: italic;
+}
+code, pre {
+    font-family: Monaco, Andale Mono, Courier New, monospace;
+}
+code {
+    /*background-color: #fee9cc;*/
+    color: rgba(0, 0, 0, 0.75);
+    padding: 1px 3px;
+    font-size: 12px;
+    -webkit-border-radius: 3px;
+    -moz-border-radius: 3px;
+    border-radius: 3px;
+}
+pre {
+    display: block;
+    padding: 14px;
+    margin: 0 0 18px;
+    line-height: 16px;
+    font-size: 11px;
+    border: 1px solid #d9d9d9;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code {
+    background-color: #fff;
+    color:#737373;
+    font-size: 11px;
+    padding: 0;
+}
+sup {
+    font-size: 0.83em;
+    vertical-align: super;
+    line-height: 0;
+}
+* {
+	-webkit-print-color-adjust: exact;
+}
+@media screen and (min-width: 914px) {
+    body {
+        width: 854px;
+        margin:10px auto;
+    }
+}
+@media print {
+	body,code,pre code,h1,h2,h3,h4,h5,h6 {
+		color: black;
+	}
+	table, pre {
+		page-break-inside: avoid;
+	}
+}
+</style>
+<title>MIT 6.828 JOS Lab5</title>
+
+</head>
+<body>
+<h1>MIT 6.828 JOS Lab5</h1>
+
+<p><strong>YANG Weikun 1100012442</strong></p>
+
+<p>14th Oct 2013 02:00 UTC+0800</p>
+
+<h2>Getting Started</h2>
+
+<p>After merging with <code>origin/lab5</code>, <code>GNUmakefile</code> uses native gcc to compile something for the disk image. The gcc on my system is <code>x86_64-apple-darwin13.0.0-gcc</code>.</p>
+
+<h2>Ex.1 Disk Access</h2>
+
+<p>Following the monolithic kernel design, we are moving the file system out side the OS. Disk access are all handled in a special user process with type <code>ENV_TYPE_FS</code>.  We use polling I/O to further reduce the complexity.</p>
+
+<p><code>IOPL</code> bits in <code>EFLAGS</code> register control device I/O privilege. So the FS process will be the only process initiated with such privilege.</p>
+
+<h3>Q&amp;A</h3>
+
+<ol>
+<li><em>'Do you have to do anything else to ensure that this I/O privilege setting is saved and restored properly when you subsequently switch from one environment to another? Why?'</em>
+
+<ul>
+<li>Nope, I didn't need to do anything else. When an interrupt occurs the <code>EFLAGS</code> register is saved automatically by hardware. When the kernel returns to user programs <code>EFLAGS</code> is restored.</li>
+</ul>
+</li>
+</ol>
+
+
+<hr />
+
+<h2>Ex.2 The Block Cache</h2>
+
+<p>Our block cache strategy can't be simpler: we use 3GB of memory space from <code>DISKMAP</code>, to map the entire disk. Access to disk block <code>i</code> will try to access memory location <code>DISKMAP + i * BLKSIZE</code>. If the block does not exist in memory a page fault will occur, then our page fault handler will allocate space and read the actual disk contents in memory.</p>
+
+<p>In this exercise I encountered several strange problems, one of which is that <code>ROUNDDOWN</code> causes illegal memory access when code is compiled with <code>-O0</code>. Never figured out why, so I didn't use <code>ROUNDDOWN</code> anymore.</p>
+
+<hr />
+
+<h2>Ex.3 Spawning Processes</h2>
+
+<p>To implement a user mode <code>spawn</code> (equivalent to UNIX <code>fork + exec</code>), we must provide an interface for user programs to modify the trap frame of another user program, the system call <code>sys_env_set_trapframe</code>. In this system call, we first validate the pointer from user, then make sure that the modified trap frame has:</p>
+
+<ol>
+<li><code>FL_IF</code> on to receive interrupts.</li>
+<li><code>FL_IOPL_MASK</code> off (to deny I/O operations).</li>
+<li><code>CPL</code> of 3 so the program will run in user mode.</li>
+</ol>
+
+
+<hr />
+
+<h2>Ex.4 Sharing library state across fork and spawn</h2>
+
+<p>Following instruction from MIT, we must find pages marked with <code>PTE_SHARE</code> and map them accordingly in both <code>fork</code> and <code>spawn</code>.</p>
+
+<hr />
+
+<h2>Ex.5 The keyboard interface</h2>
+
+<p>Input from QEMU window will be sent as keyboard interrupts with number <code>IRQ_OFFSET+IRQ_KBD</code>, handled by <code>kbd_intr</code>; Input from terminal window (of the host) will be sent as serial interrupts with number <code>IRQ_OFFSET+IRQ_SERIAL</code>, handled by <code>serial_intr</code>. <code>trap_dispatch</code> is modified to suit the change.</p>
+
+<h3>Q&amp;A</h3>
+
+<ol>
+<li><em>'How long approximately did it take you to do this lab?'</em>
+
+<ul>
+<li>A bit more than 3 hours (without doing the challenges). This seems the easiest lab in all 5.</li>
+</ul>
+</li>
+<li><em>'Any suggestions?'</em>
+
+<ul>
+<li>All 5 labs are great! Wonder if 64-bit <code>jos</code> is coming next year?</li>
+</ul>
+</li>
+</ol>
+
+</body>
+</html>

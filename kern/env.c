@@ -302,8 +302,9 @@ region_alloc(struct Env *e, void *va, size_t len)
 	int res = 0;
 	struct PageInfo* pp;
 	while (va < end){
-		if (!(pp = page_alloc(ALLOC_ZERO)) 
-			|| (res = page_insert(e->env_pgdir, pp, va, PTE_W | PTE_U | PTE_P)))
+		if (!(pp = page_alloc(ALLOC_ZERO)))
+			panic("region_alloc: no mem");
+		if ( (res = page_insert(e->env_pgdir, pp, va, PTE_W | PTE_U | PTE_P)))
 			panic("region_alloc: %e", res);
 		va += PGSIZE;
 	}
@@ -403,7 +404,6 @@ void
 env_create(uint8_t *binary, size_t size, enum EnvType type)
 {
 	// LAB 3: Your code here.
-<<<<<<< HEAD
 	struct Env* e = NULL;
 	int res;
 	spin_lock(&env_lock);
@@ -411,12 +411,9 @@ env_create(uint8_t *binary, size_t size, enum EnvType type)
 		panic("env_create: %e", res);
 	load_icode(e, binary, size);
 	e->env_type = type;
+	if (type == ENV_TYPE_FS)
+		e->env_tf.tf_eflags |= FL_IOPL_3;
 	spin_unlock(&env_lock);
-=======
-
-	// If this is the file server (type == ENV_TYPE_FS) give it I/O privileges.
-	// LAB 5: Your code here.
->>>>>>> Release Lab 5
 }
 
 //

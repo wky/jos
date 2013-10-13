@@ -27,7 +27,7 @@ writebuf(struct printbuf *b)
 }
 
 static void
-putch(int ch, void *thunk)
+putch(int ch, int foreground, int backgroud, void *thunk)
 {
 	struct printbuf *b = (struct printbuf *) thunk;
 	b->buf[b->idx++] = ch;
