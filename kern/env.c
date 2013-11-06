@@ -358,7 +358,7 @@ load_icode(struct Env *e, uint8_t *binary, size_t size)
 			continue;
 		region_alloc(e, (void*)ph->p_va, ph->p_memsz);
 		memmove((void*)ph->p_va, binary + ph->p_offset, ph->p_filesz);
-		memset((void*)ph->p_va + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz);
+		// memset((void*)ph->p_va + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz);
 	}
 	// switch back to kernel page directory
 	lcr3(PADDR(kern_pgdir));

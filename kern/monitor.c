@@ -7,6 +7,7 @@
 #include <inc/mmu.h>
 #include <inc/assert.h>
 #include <inc/x86.h>
+#include <kern/env.h>
 
 #include <kern/console.h>
 #include <kern/pmap.h>
@@ -32,6 +33,9 @@ static struct Command commands[] = {
 	{ "cpuinfo", "Display CPUID features", mon_cpuinfo },
 	{ "showmappings", "Display virtual memory mappings in range", mon_showmappings},
 	{ "memdump", "Display contents of virtual or physical memory", mon_memdump},
+	{ "continue", "Continue execution after a debug/breakpoint exception", mon_continue},
+	{ "singlestep", "Set Trap flag to enable single stepping for the current process", mon_singlestep},
+	{ "stopstep", "Clear Trap flag to enable normal execution for the current process", mon_stopstep},
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -78,7 +82,39 @@ conv_perm(uintptr_t pte){
 #define PG_BEGIN(va) ((va) & ~(1<<PGSHIFT))
 #endif
 
-int mon_memdump(int argc, char **argv, struct Trapframe *tf){
+int
+mon_continue(int argc, char **argv, struct Trapframe *tf){
+	if (tf == NULL){
+		cprintf("No trapframe to continue!\n");
+		return 0;
+	}
+	cprintf("Continue execution of user program ...\n");
+	env_pop_tf(tf); // noreturn
+	return 0;
+}
+int
+mon_singlestep(int argc, char **argv, struct Trapframe *tf){
+	if (tf == NULL){
+		cprintf("No trapframe!\n");
+		return 0;
+	}
+	tf->tf_eflags |= FL_TF;
+	cprintf("Trap flag set.\n");
+	return 0;
+}
+int
+mon_stopstep(int argc, char **argv, struct Trapframe *tf){
+	if (tf == NULL){
+		cprintf("No trapframe!\n");
+		return 0;
+	}
+	tf->tf_eflags &= ~FL_TF;
+	cprintf("Trap flag cleared.\n");
+	return 0;
+}
+
+int
+mon_memdump(int argc, char **argv, struct Trapframe *tf){
 	// memdump p/v 0x0000 (0x000) 
 	uintptr_t begin = 0, len = 1, va;
 	int pgbegin, i, j; 

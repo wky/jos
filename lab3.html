@@ -163,6 +163,8 @@ sup {
 <p>PartA: 30th September 2013, 17:00 UTC+0800<br/>
 PartB: 4th October 2013, 22:30 UTC+0800</p>
 
+<p>After reducing code quoting the report may become considerably shorter but nevertheless expressive.</p>
+
 <hr />
 
 <h2>Ex.1 Allocating the Environments Array</h2>
@@ -186,33 +188,46 @@ boot_map_region(kern_pgdir, UENVS,
 for (i = 0; i &lt; npages / NPTENTRIES; i++) 
 </code></pre>
 
-<p><strong><em>Note: from this point, I will try not to quote too much code, for obvious reasons</em></strong></p>
-
-<ul>
-<li><strong>Quoting too much code ruins your report! People don't really care about your exact implementation, they want an general description of your design, something you can't steal. Anyone want to see the code, they head for your code directly.</strong></li>
-<li><strong>Isn't it very nice to practice English writing on technical issues?</strong></li>
-</ul>
-
-
-<p>The report becomes considerably shorter but nevertheless expressive.</p>
-
 <hr />
 
 <h2>Ex.2 Creating and Running Environments</h2>
 
-<p>In <code>env_init()</code>, memory occupied by <code>envs</code> is wiped clean, then all <code>struct Env</code>s are linked.</p>
+<p>In <code>env_init()</code>, memory occupied by <code>envs</code> is wiped clean, then all <code>struct Env</code> are linked.</p>
 
 <p>In <code>env_setup_vm()</code>, first a physical page is allocated for the <code>Env</code>'s page directory. Page directory entries for VA above <code>UTOP</code> is copied from <code>kern_pgdir</code>, the rest is unmapped. Then the reference count is incremented.</p>
+
+<pre><code>e-&gt;env_pgdir = page2kva(p);
+// copy kernel address space
+memmove(e-&gt;env_pgdir, (void*)kern_pgdir, PGSIZE);
+// wipe out VM mappings below UTOP
+memset(e-&gt;env_pgdir, 0, sizeof(pde_t) * PDX(UTOP));
+p-&gt;pp_ref ++;
+e-&gt;env_pgdir[PDX(UVPT)] = PADDR(e-&gt;env_pgdir) | PTE_P | PTE_U;
+</code></pre>
 
 <p>As for <code>region_alloc()</code>, that allocates memory for user ELF image, with user read/write permission. <code>va</code> and <code>len</code> are rounded appropriately.</p>
 
 <p>Moving on to <code>load_icode()</code>. We must parse the ELF structure, and load appropriate segments into the <code>Env</code>'s VA, and reserve wiped space if necessary. Then we copy the ELF's entry point to <code>eip</code> of the <code>Env</code>'s trap frame. Finally we  allocate 1 page for the program's stack. I used <code>lcr3</code> to switch the page directories, so that I can access user VA directly.</p>
 
+<pre><code>ph = (struct Proghdr *)(binary + elf-&gt;e_phoff);
+eph = ph + elf-&gt;e_phnum;
+// switch to user page directory
+lcr3(PADDR(e-&gt;env_pgdir));
+for (; ph &lt; eph; ph++){
+    if (ph-&gt;p_type != ELF_PROG_LOAD) continue;
+    // allocate space for this segment
+    region_alloc(e, (void*)ph-&gt;p_va, ph-&gt;p_memsz);
+    // copy contents (if any)
+    memmove((void*)ph-&gt;p_va, binary + ph-&gt;p_offset, ph-&gt;p_filesz);
+}// switch back to kernel page directory
+lcr3(PADDR(kern_pgdir));
+</code></pre>
+
 <p>Next we have <code>env_create()</code> to sum up all the preparation.</p>
 
-<p>Finally the <code>env_run()</code> that fall back to user program.</p>
+<p>Finally the <code>env_run()</code> that drops back to user program, by loading the appropriate page directory then restores all registers.</p>
 
-<p>Now our <code>joe</code> should be able to drop to user program. See my debug session: User program was loaded at <code>0x800020</code>, call chain is like this (some omitted):</p>
+<p>Now our <code>jos</code> should be able to drop to user program. See my debug session: User program was loaded at <code>0x800020</code>, call chain is like this (some omitted):</p>
 
 <ul>
 <li><code>0x80002c call libmain&lt;0x800060&gt;</code>
@@ -265,15 +280,22 @@ for (i = 0; i &lt; npages / NPTENTRIES; i++)
 
 <h2>Ex.4 Setting Up the IDT</h2>
 
+<h2>Challenge</h2>
+
 <p>I've written a little python script, to do the messy work automatically:</p>
 
 <ol>
-<li>generate trap vectors in <code>kern/trapentry.S</code> using <code>kern/trapentry.tmpl</code> as template.</li>
+<li>generate trap vectors in <code>kern/trapentry.S</code> using <code>kern/trapentry.tmpl</code> as template.
+
+<ul>
+<li>all handlers are interrupt gates, but breakpoints and syscalls needs DPL of 3 for user invocation.</li>
+</ul>
+</li>
 <li>setup IDT entries in 'kern/trap.c' using <code>kern/trap.c.tmpl</code> as template.</li>
 </ol>
 
 
-<p>This part of the logic is written in <code>kern/Makefrag</code>. Following instruction on MIT's page, we now have the IDT working.</p>
+<p>This part of the logic is written in <code>kern/Makefrag</code>. Following instruction on MIT's page, we now have the IDT working. Sometimes the auto-generation of code makes <code>make</code> confused, just try <code>make</code> again.</p>
 
 <p>Later I found a alternative way which is pretty elegant as well. A short description:</p>
 
@@ -310,6 +332,15 @@ for (i = 0; i &lt; npages / NPTENTRIES; i++)
 
 <p>In <code>kern/trap.c trap_dispatch()</code> I used <code>switch-case</code> to dispatch traps. Trap number is stored in <code>tf-&gt;tf_trapno</code>, for the case <code>T_PGFLT</code> we just need to call <code>page_fault_handler(tf)</code>.</p>
 
+<pre><code>...
+switch (tf-&gt;tf_trapno){
+    ...
+    case T_PGFLT:
+        page_fault_handler(tf); // does not return
+    ...
+}
+</code></pre>
+
 <p>The privilege level that the trap's initiator was in, is stored in the last 2 bits of <code>CS</code> segment selector. If the page fault was from the kernel (privilege level 0), we will print the trap-frame then panic. Otherwise the fault must be from user (privilege level 3), we handle this by printing the trap-frame then destroy the current environment.</p>
 
 <hr />
@@ -342,21 +373,74 @@ for (i = 0; i &lt; npages / NPTENTRIES; i++)
 
 <h3>Break/Continue/Single-Stepping, and a general debugger for user programs</h3>
 
-<p>later.</p>
+<p>Continue and Single-stepping commands are added to lab3 branch of jos. Those commands are not compatible with SMP introduced in lab4. Here's a short description:</p>
+
+<ul>
+<li><code>continue</code>: Continue execution after a debug/breakpoint exception. Simply restores the <code>Trapframe *tf</code>.</li>
+<li><code>singlestep</code>:Set Trap flag to enable single stepping for the current process</li>
+<li><code>stopstep</code>: Clear Trap flag to enable normal execution for the current process</li>
+</ul>
+
+
+<p><code>trap.c</code> is modified to dispatch debug/breakpoint exceptions to the monitor. <code>user/breakpoint.c</code> is modified to test added utility:</p>
+
+<pre><code>...
+cprintf("Issue a breakpoint using 'int $3'...\n");
+asm volatile("int $3");
+cprintf("Recovered from breakpoint...\n");
+</code></pre>
+
+<p>and corresponding disassembled code:</p>
+
+<pre><code>...
+cprintf("Issue a breakpoint using 'int $3'...\n");
+    80003a: c7 04 24 7c 13 80 00    movl   $0x80137c,(%esp)
+    800041: e8 36 01 00 00          call   80017c &lt;cprintf&gt;
+asm volatile("int $3");
+    800046: cc                      int3   
+cprintf("Recovered from breakpoint...\n");
+    800047: c7 04 24 a2 13 80 00    movl   $0x8013a2,(%esp)
+    80004e: e8 29 01 00 00          call   80017c &lt;cprintf&gt;
+...
+</code></pre>
+
+<p>Log output to show usability (only important lines are shown):</p>
+
+<pre><code>[00000000] new env 00001000
+...
+Issue a breakpoint using 'int $3'...
+  ...
+  trap 0x00000003 Breakpoint
+  eip  0x00800047
+  ...
+K&gt; singlestep
+Trap flag set.
+K&gt; continue
+Continue execution of user program ...
+  ...
+  trap 0x00000001 Debug
+  eip  0x0080004e
+  ...
+K&gt; continue
+Continue execution of user program ...
+  ...
+  trap 0x00000001 Debug
+  eip  0x0080017c
+  ...
+K&gt; stopstep
+Trap flag cleared.
+K&gt; continue
+Continue execution of user program ...
+Recovered from breakpoint...
+...
+[00001000] exiting gracefully
+</code></pre>
 
 <hr />
 
 <h2>Ex.7 System Calls</h2>
 
 <p>In function <code>syscall()</code> in <code>kern/syscall.c</code>, another <code>switch-case is</code> used to dispatch the system calls according to <code>syscallno</code>. For every case we convert and pass required arguments, then delegate return values if any. <code>-E_INVAL</code> is returned if a non-existing system call is requested.</p>
-
-<hr />
-
-<h2>Challenge</h2>
-
-<h3>Fast system call by sysenter/sysexit instructions.</h3>
-
-<p>later.</p>
 
 <hr />
 
@@ -374,5 +458,19 @@ for (i = 0; i &lt; npages / NPTENTRIES; i++)
 Second part: sanity checking of user's arguments.</p>
 
 <p>In <code>kern/pmap.c</code>, we must implement <code>user_mem_check()</code> to verify the existence and permission of a range of memory in user space. <code>user_mem_assert()</code> will destroy the user <code>Env</code> if memory access violates. <code>debuginfo_eip</code> and various system calls use the sanity checks as well.</p>
+
+<pre><code>// extend [va,va+len) to [begin, end)
+void *begin = (void*)ROUNDDOWN(va, PGSIZE);
+void *end = (void*)ROUNDUP(va+len, PGSIZE);
+pte_t * pte_ptr;
+perm = perm | PTE_P;
+for ( ; begin &lt; end; begin += PGSIZE)
+    if ((uint32_t)begin &gt;= ULIM    // address should be below ULIM
+        || !(pte_ptr = pgdir_walk(env-&gt;env_pgdir, begin, 0)) // existence of VM mapping
+        || (*pte_ptr &amp; perm) != perm){ // appropriate permission
+        user_mem_check_addr = (uint32_t)((va &gt; begin)? va: begin);
+        return -E_FAULT;
+    }
+</code></pre>
 </body>
 </html>

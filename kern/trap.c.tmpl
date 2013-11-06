@@ -152,6 +152,7 @@ trap_dispatch(struct Trapframe *tf)
 			page_fault_handler(tf);
 			return;
 		case T_BRKPT:
+		case T_DEBUG:
 			monitor(tf);
 			return;
 		// system call handling, 5 arguments are from saved registers
