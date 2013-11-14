@@ -6,12 +6,12 @@ important files:
 lab4.md     markdown source file
 lab4.html   lab4 report, better rendering effects on Chrome
 
-Note:
+Note from lab3:
 1. if `make` fails, try to `make` again will solve the problem.
 2. strange things happens when I run `make grade` on OSX. I've verified
    my output by hand.
 3. Github's markdown syntax is slightly different from my markdown editor.
-   Please see lab3.html for better effects.
+   Please see lab*.html for better effects.
 
 
 Note from lab4:
