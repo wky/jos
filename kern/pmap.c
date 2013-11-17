@@ -10,6 +10,7 @@
 #include <kern/kclock.h>
 #include <kern/env.h>
 #include <kern/cpu.h>
+#include <kern/monitor.h>
 
 // These variables are set by i386_detect_memory()
 size_t npages;			// Amount of physical memory (in pages)
@@ -19,7 +20,7 @@ static size_t npages_basemem;	// Amount of base memory (in pages)
 pde_t *kern_pgdir;		// Kernel's initial page directory
 struct PageInfo *pages;		// Physical page state array
 static struct PageInfo *page_free_list;	// Free list of physical pages
-
+static struct spinlock pm_lock;
 
 // --------------------------------------------------------------
 // Detect machine's physical memory setup.
@@ -124,7 +125,8 @@ mem_init(void)
 	// Find out how much memory the machine has (npages & npages_basemem).
 	i386_detect_memory();
 
-	// Remove this line when you're ready to test this function.
+	// initialise lock on physical memory
+	spin_initlock(&pm_lock);
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
@@ -355,15 +357,15 @@ page_init(void)
 struct PageInfo *
 page_alloc(int alloc_flags)
 {
-	// Fill this function in
-	struct PageInfo* page = page_free_list;
-	if (page == NULL){
-		return NULL;
-	}
+	struct PageInfo* page;
+	spin_lock(&pm_lock);
+	if ((page = page_free_list) == NULL)
+		goto page_alloc_end;
 	page_free_list = page_free_list->pp_link;
-	if (alloc_flags & ALLOC_ZERO){
+	if (alloc_flags & ALLOC_ZERO)
 		memset(page2kva(page), 0, PGSIZE);
-	}
+page_alloc_end:
+	spin_unlock(&pm_lock);
 	return page;
 }
 
@@ -374,8 +376,10 @@ page_alloc(int alloc_flags)
 void
 page_free(struct PageInfo *pp)
 {
+	spin_lock(&pm_lock);
 	pp->pp_link = page_free_list;
 	page_free_list = pp;
+	spin_unlock(&pm_lock);
 }
 
 //
@@ -385,8 +389,8 @@ page_free(struct PageInfo *pp)
 void
 page_decref(struct PageInfo* pp)
 {
-	if (--pp->pp_ref == 0)
-		page_free(pp);
+	// atomic op
+	if (atomic_dec_test(&(pp->pp_ref))) page_free(pp);
 }
 
 // Given 'pgdir', a pointer to a page directory, pgdir_walk returns
@@ -429,7 +433,7 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 	newpg = page_alloc(ALLOC_ZERO);	// allocate new page for page table
 	if (!newpg)
 		return NULL;
-	newpg->pp_ref ++;
+	atomic_inc(&(newpg->pp_ref));
 	pgtbl = (pte_t*)page2pa(newpg);
 	*pde = (uintptr_t)pgtbl | PTE_P | PTE_W | PTE_U;
 
@@ -490,17 +494,12 @@ int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
 	pte_t *entry = pgdir_walk(pgdir, va, true);
-	if (!entry)
-		return -E_NO_MEM;
-	if (!(*entry & PTE_P))
-		goto map_new_page;
-	if (PTE_ADDR(*entry) == page2pa(pp)){
-		tlb_invalidate(pgdir, va);
-		pp->pp_ref --;
-	}else page_remove(pgdir, va);
-map_new_page:
+	if (!entry) return -E_NO_MEM;
+	// It is required to have one code path (first increment reference, then
+	// do page_remove) if multiple instances of kernel runs in parallel.
+	atomic_inc(&(pp->pp_ref));
+	if ((*entry & PTE_P) != 0) page_remove(pgdir, va);
 	*entry = page2pa(pp) | perm | PTE_P;
-	pp->pp_ref ++;
 	return 0;
 }
 
@@ -657,7 +656,7 @@ user_mem_assert(struct Env *env, const void *va, size_t len, int perm)
 {
 	if (user_mem_check(env, va, len, perm | PTE_U) < 0) {
 		cprintf("[%08x] user_mem_check assertion failure for "
-			"va %08x\n", env->env_id, user_mem_check_addr);
+			"va %08x, eip:0x%08x\n", env->env_id, user_mem_check_addr, env->env_tf.tf_eip);
 		env_destroy(env);	// may not return
 	}
 }

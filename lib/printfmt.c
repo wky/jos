@@ -8,6 +8,11 @@
 #include <inc/stdarg.h>
 #include <inc/error.h>
 
+#ifdef JOS_KERNEL
+#include <kern/console.h>
+#include <kern/spinlock.h>
+#endif
+
 /*
  * Space or zero padding and a field width are supported for the numeric
  * formats only.
@@ -96,11 +101,13 @@ vprintfmt(void (*putch)(int, int, int, void*), void *putdat, const char *fmt, va
 	unsigned long long num;
 	int base, lflag, width, precision, altflag, ansi_val;
 	char padc;
-
+#ifdef JOS_KERNEL
+	spin_lock(&cons_write_lock);
+#endif
 	while (1) {
 		while ((ch = *(unsigned char *) fmt++) != '%') {
 			if (ch == '\0')
-				return;
+				goto vprintfmt_end;
 			if (ch != 0x1b){
 			normalchar:
 				putch(ch, foreground, background, putdat);
@@ -109,7 +116,7 @@ vprintfmt(void (*putch)(int, int, int, void*), void *putdat, const char *fmt, va
 			if ((ch = *(unsigned char *) fmt++) != '['){
 				putch(0x1b, foreground, background, putdat);
 				if (ch == '\0')
-					return;
+					goto vprintfmt_end;
 				goto normalchar;
 			}
 			// process ansi escape sequence
@@ -133,7 +140,7 @@ vprintfmt(void (*putch)(int, int, int, void*), void *putdat, const char *fmt, va
 				if (ch == 'm')
 					break;
 				if (ch == '\0')
-					return;
+					goto vprintfmt_end;
 			}
 		}
 
@@ -281,6 +288,10 @@ vprintfmt(void (*putch)(int, int, int, void*), void *putdat, const char *fmt, va
 			break;
 		}
 	}
+vprintfmt_end: ;
+#ifdef JOS_KERNEL
+	spin_unlock(&cons_write_lock);
+#endif
 }
 
 void

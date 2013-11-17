@@ -6,6 +6,7 @@
 #include <inc/types.h>
 #include <inc/trap.h>
 #include <inc/memlayout.h>
+#include <kern/spinlock.h>
 
 typedef int32_t envid_t;
 
@@ -43,6 +44,8 @@ enum EnvType {
 	ENV_TYPE_USER = 0,
 };
 
+extern struct spinlock env_lock;
+
 struct Env {
 	struct Trapframe env_tf;	// Saved registers
 	struct Env *env_link;		// Next free Env
@@ -60,6 +63,7 @@ struct Env {
 	void *env_pgfault_upcall;	// Page fault upcall entry point
 
 	// Lab 4 IPC
+	struct spinlock env_ipc_lock; // to prevent concurrent access to ipc state
 	bool env_ipc_recving;		// Env is blocked receiving
 	void *env_ipc_dstva;		// VA at which to map received page
 	uint32_t env_ipc_value;		// Data value sent to us

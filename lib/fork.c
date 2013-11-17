@@ -7,6 +7,7 @@
 // It is one of the bits explicitly allocated to user processes (PTE_AVAIL).
 #define PTE_COW		0x800
 
+
 //
 // Custom page fault handler - if faulting page is copy-on-write,
 // map in our own private writable copy.
@@ -27,8 +28,9 @@ pgfault(struct UTrapframe *utf)
 	// LAB 4: Your code here.
 	if (!(err & FEC_WR) 
 		|| !(uvpd[PDX(addr)] & PTE_P) 
-		|| !(uvpt[PGNUM(addr)] & PTE_COW))
-		panic("user page fault: va %p err 0x%08x", addr, err);
+		|| !(uvpt[PGNUM(addr)] & PTE_COW)){
+		panic("user page fault: va %p err 0x%x, eip:%x, esp:%x", addr, err, utf->utf_eip, utf->utf_esp);
+	}
 	// Allocate a new page, map it at a temporary location (PFTEMP),
 	// copy the data from the old page to the new page, then move the new
 	// page to the old page's address.
@@ -100,6 +102,7 @@ fork(void)
 	if (!envid){
 		// child
 		thisenv = &envs[ENVX(sys_getenvid())];
+		// cprintf("I'm a new process!! [..%x..]\n", thisenv->env_id);
 		return 0;
 	}
 	// parent
@@ -112,7 +115,7 @@ fork(void)
 			return ret;
 	}
 	
-	// allocate child's exception stack and pag fault handler
+	// allocate child's exception stack and page fault handler
 	if ((ret = sys_page_alloc(envid, (void*)(UXSTACKTOP-PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
 		return ret;
 	extern void _pgfault_upcall (void);

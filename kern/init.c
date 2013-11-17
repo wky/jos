@@ -47,9 +47,6 @@ i386_init(void)
 	// Lab 4 multitasking initialization functions
 	pic_init();
 
-	// Acquire the big kernel lock before waking up APs
-	// Your code here:
-	lock_kernel();
 	// Starting non-boot CPUs
 	boot_aps();
 
@@ -67,14 +64,11 @@ i386_init(void)
 	ENV_CREATE(user_yield, ENV_TYPE_USER);
 #endif // TEST*
 
-	// We only have one user environment for now, so just run it.
-	env_run(&envs[0]);
-	
+	// Schedule and run the first user environment!
+	sched_yield();
 	// Drop into the kernel monitor.
 	while (1)
 		monitor(NULL);
-	// Schedule and run the first user environment!
-	sched_yield();
 }
 
 // While boot_aps is booting a given CPU, it communicates the per-core
@@ -127,8 +121,6 @@ mp_main(void)
 	// only one CPU can enter the scheduler at a time!
 	//
 	// Your code here:
-	lock_kernel();
-	// Remove this after you finish Exercise 4
 	sched_yield();
 }
 

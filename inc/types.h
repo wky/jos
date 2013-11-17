@@ -19,6 +19,21 @@ typedef unsigned int uint32_t;
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
 
+typedef uint32_t atomic_t;
+
+static inline void atomic_inc(atomic_t *v){
+	asm volatile ("lock; incl %0":"+m"(*v));
+}
+
+// atomically decrements, returns true if result is zero
+static inline int atomic_dec_test(atomic_t *v){
+	unsigned char c;
+	asm volatile ("lock; decl %0; sete %1"
+			:"+m"(*v), "=qm" (c)
+			: : "memory");
+	return c != 0;
+}
+
 // Pointers and addresses are 32 bits long.
 // We use pointer types to represent virtual addresses,
 // uintptr_t to represent the numerical values of virtual addresses,

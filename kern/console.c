@@ -9,6 +9,11 @@
 #include <kern/console.h>
 #include <kern/picirq.h>
 
+#include <kern/spinlock.h>
+
+struct spinlock cons_read_lock;
+struct spinlock cons_write_lock;
+
 static void cons_intr(int (*proc)(void));
 static void cons_putc(int c);
 
@@ -446,7 +451,8 @@ cons_init(void)
 	cga_init();
 	kbd_init();
 	serial_init();
-
+	spin_initlock(&cons_write_lock);
+	spin_initlock(&cons_read_lock);
 	if (!serial_exists)
 		cprintf("Serial port does not exist!\n");
 }

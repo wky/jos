@@ -1,5 +1,6 @@
 #include <inc/assert.h>
 #include <inc/x86.h>
+#include <inc/syscall.h>
 #include <kern/spinlock.h>
 #include <kern/env.h>
 #include <kern/pmap.h>
@@ -33,21 +34,26 @@ sched_yield(void)
 	if (begin == envs + NENV)
 		begin = envs;
 	idle = begin;
+	spin_lock(&env_lock);
 	while (idle != envs + NENV){
-		if (idle->env_status == ENV_RUNNABLE)
-			env_run(idle);
+		if (idle->env_status == ENV_RUNNABLE) goto sched_yield_run;
 		idle ++;
 	}
 	idle = envs;
 	while (idle != begin){
-		if (idle->env_status == ENV_RUNNABLE)
-			env_run(idle);
+		if (idle->env_status == ENV_RUNNABLE) goto sched_yield_run;
 		idle ++;
 	}
-	if (curenv && curenv->env_status == ENV_RUNNING)
-		env_run(curenv);
-	// sched_halt never returns
-	sched_halt();
+	if (curenv && curenv->env_status == ENV_RUNNING) idle = curenv;
+	else { // sched_halt never returns
+		spin_unlock(&env_lock);
+		sched_halt();
+	}
+sched_yield_run:
+	if (idle->env_tf.tf_regs.reg_esi == SYS_ipc_recv && idle->env_tf.tf_regs.reg_eax == SYS_ipc_recv){
+		cprintf("caught in sched_yield!\n");
+	}
+	env_run(idle);
 }
 
 // Halt this CPU when there is nothing to do. Wait until the
@@ -56,21 +62,8 @@ sched_yield(void)
 void
 sched_halt(void)
 {
-	int i;
-
-	// For debugging and testing purposes, if there are no runnable
-	// environments in the system, then drop into the kernel monitor.
-	for (i = 0; i < NENV; i++) {
-		if ((envs[i].env_status == ENV_RUNNABLE ||
-		     envs[i].env_status == ENV_RUNNING))
-			break;
-	}
-	if (i == NENV) {
-		cprintf("No runnable environments in the system!\n");
-		while (1)
-			monitor(NULL);
-	}
-
+	if (env_lock.locked && env_lock.cpu == thiscpu)
+		panic("cpu[%d] about to halt but still holding env_lock", cpunum());
 	// Mark that no environment is running on this CPU
 	curenv = NULL;
 	lcr3(PADDR(kern_pgdir));
@@ -82,7 +75,7 @@ sched_halt(void)
 
 	// Release the big kernel lock as if we were "leaving" the kernel
 	// cprintf("CPU %d about to halt!\n", cpunum());
-	unlock_kernel();
+	// unlock_kernel();
 
 	// Reset stack pointer, enable interrupts and then halt.
 	asm volatile (

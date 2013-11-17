@@ -61,8 +61,24 @@ void
 spin_lock(struct spinlock *lk)
 {
 #ifdef DEBUG_SPINLOCK
-	if (holding(lk))
+	if (holding(lk)){
+		int i;
+		uint32_t pcs[10];
+		// Nab the acquiring EIP chain before it gets released
+		memmove(pcs, lk->pcs, sizeof pcs);
+		cprintf("CPU %d cannot acquire %s: already holding:", cpunum(), lk->name);
+		for (i = 0; i < 10 && pcs[i]; i++) {
+			struct Eipdebuginfo info;
+			if (debuginfo_eip(pcs[i], &info) >= 0)
+				cprintf("  %08x %s:%d: %.*s+%x\n", pcs[i],
+					info.eip_file, info.eip_line,
+					info.eip_fn_namelen, info.eip_fn_name,
+					pcs[i] - info.eip_fn_addr);
+			else
+				cprintf("  %08x\n", pcs[i]);
+		}
 		panic("CPU %d cannot acquire %s: already holding", cpunum(), lk->name);
+	}
 #endif
 
 	// The xchg is atomic.

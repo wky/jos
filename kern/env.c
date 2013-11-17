@@ -6,6 +6,7 @@
 #include <inc/string.h>
 #include <inc/assert.h>
 #include <inc/elf.h>
+#include <inc/syscall.h>
 
 #include <kern/env.h>
 #include <kern/pmap.h>
@@ -18,6 +19,9 @@
 struct Env *envs = NULL;		// All environments
 static struct Env *env_free_list;	// Free environment list
 					// (linked by Env->env_link)
+
+struct spinlock env_lock; // this lock prevent concurrent access to 
+						 // any of the envs and the free list
 
 #define ENVGENSHIFT	12		// >= LOGNENV
 
@@ -127,6 +131,7 @@ env_init(void)
 		env_ptr = env_ptr + 1;
 	}
 	env_free_list = envs;
+	spin_initlock(&env_lock);
 	// Per-CPU part of the initialization
 	env_init_percpu();
 }
@@ -212,7 +217,6 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	int32_t generation;
 	int r;
 	struct Env *e;
-
 	if (!(e = env_free_list))
 		return -E_NO_FREE_ENV;
 
@@ -262,11 +266,11 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	// Also clear the IPC receiving flag.
 	e->env_ipc_recving = 0;
 
+	spin_initlock(&(e->env_ipc_lock));
 	// commit the allocation
 	env_free_list = e->env_link;
 	*newenv_store = e;
-
-	cprintf("[%08x] new env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
+	// cprintf("[%08x] new env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
 	return 0;
 }
 
@@ -289,7 +293,7 @@ region_alloc(struct Env *e, void *va, size_t len)
 	//   (Watch out for corner-cases!)
 	va = ROUNDDOWN(va, PGSIZE);
 	void* end = ROUNDUP(va + len, PGSIZE);
-	int res;
+	int res = 0;
 	struct PageInfo* pp;
 	while (va < end){
 		if (!(pp = page_alloc(ALLOC_ZERO)) 
@@ -395,10 +399,12 @@ env_create(uint8_t *binary, size_t size, enum EnvType type)
 	// LAB 3: Your code here.
 	struct Env* e = NULL;
 	int res;
+	spin_lock(&env_lock);
 	if ((res = env_alloc(&e, 0)))
 		panic("env_create: %e", res);
 	load_icode(e, binary, size);
 	e->env_type = type;
+	spin_unlock(&env_lock);
 }
 
 //
@@ -465,13 +471,16 @@ env_destroy(struct Env *e)
 	// If e is currently running on other CPUs, we change its state to
 	// ENV_DYING. A zombie environment will be freed the next time
 	// it traps to the kernel.
+	spin_lock(&env_lock);
 	if (e->env_status == ENV_RUNNING && curenv != e) {
 		e->env_status = ENV_DYING;
+		spin_unlock(&env_lock);
 		return;
 	}
 
 	env_free(e);
-
+	spin_unlock(&env_lock);
+	
 	if (curenv == e) {
 		curenv = NULL;
 		sched_yield();
@@ -491,7 +500,11 @@ env_pop_tf(struct Trapframe *tf)
 	// Record the CPU we are running on for user-space debugging
 	curenv->env_cpunum = cpunum();
 	// cprintf("About to run Env %08x on CPU %d.\n", curenv->env_id, cpunum());
-	unlock_kernel();
+	// unlock_kernel();
+	// if (tf->tf_trapno == T_SYSCALL && tf->tf_regs.reg_eax  == 12){
+	// 	print_trapframe(tf);
+	// 	panic("bad syscall.");
+	// }
 	__asm __volatile("movl %0,%%esp\n"
 		"\tpopal\n"
 		"\tpopl %%es\n"
@@ -532,10 +545,19 @@ env_run(struct Env *e)
 	if (curenv && curenv->env_status == ENV_RUNNING){
 		curenv->env_status = ENV_RUNNABLE;
 	}
-	curenv = e;
 	e->env_status = ENV_RUNNING;
 	e->env_runs ++;
 	lcr3(PADDR(e->env_pgdir));
+	if (e->env_tf.tf_regs.reg_esi == SYS_ipc_recv && e->env_tf.tf_regs.reg_eax == SYS_ipc_recv){
+		cprintf("env[%x] out ipc_recv, from[%x], val[%x], cpu[%d], eip[%x]\n", e->env_id, e->env_ipc_from, e->env_ipc_value, cpunum(), e->env_tf.tf_eip);
+		unsigned int *bp = (uint32_t *)(e->env_tf.tf_regs.reg_ebp);
+		while (bp != 0){
+			cprintf("%x ", bp[1]);
+			bp = (unsigned int*)(bp[0]);
+		}
+	}
+	curenv = e;
+	spin_unlock(&env_lock);
 	env_pop_tf(&(e->env_tf));
 }
 

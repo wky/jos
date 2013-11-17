@@ -15,11 +15,13 @@ primeproc(void)
 {
 	int i, id, p;
 	envid_t envid;
+	int msg_id;
 
 	// fetch a prime from our left neighbor
 top:
+	msg_id = 0;
 	p = ipc_recv(&envid, 0, 0);
-	cprintf("CPU %d: %d ", thisenv->env_cpunum, p);
+	cprintf("CPU %d: %d \n", thisenv->env_cpunum, p&0xffff);
 
 	// fork a right neighbor to continue the chain
 	if ((id = fork()) < 0)
@@ -29,9 +31,9 @@ top:
 
 	// filter out multiples of our prime
 	while (1) {
-		i = ipc_recv(&envid, 0, 0);
+		i = ipc_recv(&envid, 0, 0) & 0xffff;
 		if (i % p)
-			ipc_send(id, i, 0, 0);
+			ipc_send(id, i | ((msg_id++) << 16), 0, 0);
 	}
 }
 
@@ -48,6 +50,6 @@ umain(int argc, char **argv)
 
 	// feed all the integers through
 	for (i = 2; ; i++)
-		ipc_send(id, i, 0, 0);
+		ipc_send(id, i | ((i-2)<<16), 0, 0);
 }
 

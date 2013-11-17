@@ -42,4 +42,10 @@ void kbd_intr(void); // irq 1
 void serial_intr(void); // irq 4
 void cputchar_opt(int c, int foreground, int background);
 
+// console locks are only used in kernel.
+// user programs are not guarenteed consistent console I/O.
+
+extern struct spinlock cons_read_lock;
+extern struct spinlock cons_write_lock;
+
 #endif /* _CONSOLE_H_ */

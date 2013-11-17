@@ -191,10 +191,24 @@ trap_dispatch(struct Trapframe *tf)
 			tf->tf_regs.reg_eax = syscall(tf->tf_regs.reg_eax,
 				tf->tf_regs.reg_edx, tf->tf_regs.reg_ecx, tf->tf_regs.reg_ebx,
             	tf->tf_regs.reg_edi, tf->tf_regs.reg_esi);
+			if (tf->tf_regs.reg_esi == SYS_ipc_recv && tf->tf_regs.reg_eax == SYS_ipc_recv){
+				cprintf("caught in trap.c, trap_dispatch\n");
+			}
 			return;
 		case IRQ_OFFSET + IRQ_TIMER:
+			if ((tf->tf_cs & 3) != 3){
+				uint32_t *bp = (uint32_t *)tf->tf_regs.reg_ebp;
+				cprintf("cpu[%d] timer interrupt 0x%x\n", cpunum(), bp!=NULL?bp[1]:(uint32_t)bp);
+			// 	print_trapframe(tf);
+			}
 			lapic_eoi();
 			sched_yield();
+        case IRQ_OFFSET + IRQ_KBD:
+            kbd_intr();
+            return;
+        case IRQ_OFFSET+IRQ_SERIAL:
+            serial_intr();
+            return;
 		default:
 			break;
 	}
@@ -228,7 +242,7 @@ trap(struct Trapframe *tf)
 	// The environment may have set DF and some versions
 	// of GCC rely on DF being clear
 	asm volatile("cld" ::: "cc");
-
+	struct Trapframe *tf_onstack;	
 	// Halt the CPU if some other CPU has called panic()
 	extern char *panicstr;
 	if (panicstr)
@@ -236,8 +250,7 @@ trap(struct Trapframe *tf)
 
 	// Re-acqurie the big kernel lock if we were halted in
 	// sched_yield()
-	if (xchg(&thiscpu->cpu_status, CPU_STARTED) == CPU_HALTED)
-		lock_kernel();
+	xchg(&thiscpu->cpu_status, CPU_STARTED);
 	// Check that interrupts are disabled.  If this assertion
 	// fails, DO NOT be tempted to fix it by inserting a "cli" in
 	// the interrupt path.
@@ -248,12 +261,13 @@ trap(struct Trapframe *tf)
 		// Acquire the big kernel lock before doing any
 		// serious kernel work.
 		// LAB 4: Your code here.
-		lock_kernel();
 		assert(curenv);
 
 		// Garbage collect if current enviroment is a zombie
 		if (curenv->env_status == ENV_DYING) {
+			spin_lock(&env_lock);
 			env_free(curenv);
+			spin_unlock(&env_lock);
 			curenv = NULL;
 			sched_yield();
 		}
@@ -263,6 +277,7 @@ trap(struct Trapframe *tf)
 		// will restart at the trap point.
 		curenv->env_tf = *tf;
 		// The trapframe on the stack should be ignored from here on.
+		tf_onstack = tf;
 		tf = &curenv->env_tf;
 	}
 
@@ -276,10 +291,15 @@ trap(struct Trapframe *tf)
 	// If we made it to this point, then no other environment was
 	// scheduled, so we should return to the current environment
 	// if doing so makes sense.
-	if (curenv && curenv->env_status == ENV_RUNNING)
+	if (curenv && curenv->env_status == ENV_RUNNING){
+		// cprintf("cpu%d out syscall:%d, env:%x, status:%d\n", cpunum(), tf_onstack->tf_regs.reg_eax, curenv->env_id, curenv->env_status);
+		if (curenv->env_tf.tf_regs.reg_esi == SYS_ipc_recv && curenv->env_tf.tf_regs.reg_eax == SYS_ipc_recv){
+			cprintf("caught in trap.c, trap\n");
+		}
+		spin_lock(&env_lock);
 		env_run(curenv);
-	else
-		sched_yield();
+	}
+	else sched_yield();
 }
 
 
@@ -332,7 +352,10 @@ page_fault_handler(struct Trapframe *tf)
 	// if (curenv->env_pgfault_upcall == NULL)
 	// 	goto page_fault_destroy_env;
 	user_mem_assert(curenv, (void*)curenv->env_pgfault_upcall, 0,  0);
+	// cprintf("[CPU%d] checking ex-stack(0x%08x) of env[%08x]\n", cpunum(), (UXSTACKTOP - PGSIZE), curenv->env_id);
 	user_mem_assert(curenv, (void*)(UXSTACKTOP - PGSIZE), PGSIZE, PTE_W);
+
+	// cprintf("user [%x] pagefault: 0x%x, CPU:%d\n", curenv->env_id, fault_va, cpunum());
 	// check if already on exception stack
 	if (tf->tf_esp > UXSTACKTOP - PGSIZE){
 		// check if about to overflow the excetion stack
@@ -359,6 +382,7 @@ page_fault_handler(struct Trapframe *tf)
 	memset(&(tf->tf_regs), 0, sizeof(struct PushRegs));
 	tf->tf_esp = (uint32_t)exstack_addr;
 	tf->tf_eip = (uint32_t)curenv->env_pgfault_upcall;
+	spin_lock(&env_lock);
 	env_run(curenv);
 	// Destroy the environment that caused the fault.
 page_fault_destroy_env:
