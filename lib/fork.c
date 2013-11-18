@@ -67,6 +67,7 @@ duppage(envid_t envid, unsigned pn)
 	if (uvpt[pn] & PTE_W || uvpt[pn] & PTE_COW){
 		r = sys_page_map(0, va, envid, va, PTE_P | PTE_U | PTE_COW);
 		if (r) return r;
+		// if (uvpt[pn] & PTE_COW) return 0;
 		r = sys_page_map(0, va, 0, va, PTE_P | PTE_U | PTE_COW);
 	}else
 		r = sys_page_map(0, va, envid, va, PTE_P | PTE_U);

@@ -657,6 +657,7 @@ user_mem_assert(struct Env *env, const void *va, size_t len, int perm)
 	if (user_mem_check(env, va, len, perm | PTE_U) < 0) {
 		cprintf("[%08x] user_mem_check assertion failure for "
 			"va %08x, eip:0x%08x\n", env->env_id, user_mem_check_addr, env->env_tf.tf_eip);
+		spin_lock(&env_lock);
 		env_destroy(env);	// may not return
 	}
 }

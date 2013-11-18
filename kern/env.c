@@ -71,6 +71,8 @@ struct Pseudodesc gdt_pd = {
 // If checkperm is set, the specified environment must be either the
 // current environment or an immediate child of the current environment.
 //
+// DO ACQUIRE env_lock BEFORE CALLING THIS
+// 
 // RETURNS
 //   0 on success, -E_BAD_ENV on error.
 //   On success, sets *env_store to the environment.
@@ -207,6 +209,8 @@ env_setup_vm(struct Env *e)
 // Allocates and initializes a new environment.
 // On success, the new environment is stored in *newenv_store.
 //
+// ACQUIRE env_lock BEFORE env_alloc
+//
 // Returns 0 on success, < 0 on failure.  Errors include:
 //	-E_NO_FREE_ENV if all NENVS environments are allocated
 //	-E_NO_MEM on memory exhaustion
@@ -215,8 +219,9 @@ int
 env_alloc(struct Env **newenv_store, envid_t parent_id)
 {
 	int32_t generation;
-	int r;
+	int r = 0;
 	struct Env *e;
+
 	if (!(e = env_free_list))
 		return -E_NO_FREE_ENV;
 
@@ -267,10 +272,11 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	e->env_ipc_recving = 0;
 
 	spin_initlock(&(e->env_ipc_lock));
+	e->in_syscall = 0;
 	// commit the allocation
 	env_free_list = e->env_link;
 	*newenv_store = e;
-	// cprintf("[%08x] new env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
+	cprintf("[%08x] new env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
 	return 0;
 }
 
@@ -410,6 +416,9 @@ env_create(uint8_t *binary, size_t size, enum EnvType type)
 //
 // Frees env e and all memory it uses.
 //
+// DO NOT USE OUTSIDE env.c
+// USE env_destroy INSTEAD.
+//
 void
 env_free(struct Env *e)
 {
@@ -465,13 +474,14 @@ env_free(struct Env *e)
 // If e was the current env, then runs a new environment (and does not return
 // to the caller).
 //
+// ACQUIRE env_lock before env_destroy
+//
 void
 env_destroy(struct Env *e)
 {
 	// If e is currently running on other CPUs, we change its state to
 	// ENV_DYING. A zombie environment will be freed the next time
 	// it traps to the kernel.
-	spin_lock(&env_lock);
 	if (e->env_status == ENV_RUNNING && curenv != e) {
 		e->env_status = ENV_DYING;
 		spin_unlock(&env_lock);
@@ -497,14 +507,6 @@ env_destroy(struct Env *e)
 void
 env_pop_tf(struct Trapframe *tf)
 {
-	// Record the CPU we are running on for user-space debugging
-	curenv->env_cpunum = cpunum();
-	// cprintf("About to run Env %08x on CPU %d.\n", curenv->env_id, cpunum());
-	// unlock_kernel();
-	// if (tf->tf_trapno == T_SYSCALL && tf->tf_regs.reg_eax  == 12){
-	// 	print_trapframe(tf);
-	// 	panic("bad syscall.");
-	// }
 	__asm __volatile("movl %0,%%esp\n"
 		"\tpopal\n"
 		"\tpopl %%es\n"
@@ -520,6 +522,7 @@ env_pop_tf(struct Trapframe *tf)
 // Note: if this is the first call to env_run, curenv is NULL.
 //
 // This function does not return.
+// env_lock MUST BE HELD BEFORE env_run
 //
 void
 env_run(struct Env *e)
@@ -535,7 +538,10 @@ env_run(struct Env *e)
 	// Step 2: Use env_pop_tf() to restore the environment's
 	//	   registers and drop into user mode in the
 	//	   environment.
-
+	uint32_t val = *((volatile uint32_t *)&(e->in_syscall));
+	if (val >= 10000){
+		cprintf("wtf.. syscall[%d] not finished for env[%x]\n", val-10000, e->env_id);
+	}
 	// Hint: This function loads the new environment's state from
 	//	e->env_tf.  Go back through the code you wrote above
 	//	and make sure you have set the relevant parts of
@@ -545,19 +551,18 @@ env_run(struct Env *e)
 	if (curenv && curenv->env_status == ENV_RUNNING){
 		curenv->env_status = ENV_RUNNABLE;
 	}
+	curenv = e;
 	e->env_status = ENV_RUNNING;
 	e->env_runs ++;
 	lcr3(PADDR(e->env_pgdir));
-	if (e->env_tf.tf_regs.reg_esi == SYS_ipc_recv && e->env_tf.tf_regs.reg_eax == SYS_ipc_recv){
-		cprintf("env[%x] out ipc_recv, from[%x], val[%x], cpu[%d], eip[%x]\n", e->env_id, e->env_ipc_from, e->env_ipc_value, cpunum(), e->env_tf.tf_eip);
-		unsigned int *bp = (uint32_t *)(e->env_tf.tf_regs.reg_ebp);
-		while (bp != 0){
-			cprintf("%x ", bp[1]);
-			bp = (unsigned int*)(bp[0]);
-		}
-	}
-	curenv = e;
+	// Record the CPU we are running on for user-space debugging
+	e->env_cpunum = cpunum();
 	spin_unlock(&env_lock);
+	// unlock first to avoid dead-locks
+	// since in_syscall acts like a lock
+	// wait until syscall is finished.
+	while (*((volatile uint32_t *)&(e->in_syscall)));
+		asm volatile ("pause");
 	env_pop_tf(&(e->env_tf));
 }
 

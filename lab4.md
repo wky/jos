@@ -2,8 +2,10 @@
 
 __YANG Weikun 1100012442__
 
+_UPDATE Mon 18th Nov:_ Solved concurrency challenge using fine-grained locking
+
 All exercises finished on Thu 10th Oct 22:30 UTC+0800  
-Code quoting is reduced, as I mentioned in lab2 report.
+
 ##Ex.1 Multiprocessor support
 `mmio_map_region` in `kern/pmap.c` would map page-aligned physical memory at a very high address (0xFE000000) that VM from `KERNBASE` cannot reach (over 256MB), to virtual address reserved in `[MMIOBASE, MMIOLIM)`. I called `boot_map_region` with cache-disabled, write-through and kernel-write permissions.
 
@@ -19,7 +21,12 @@ By Intel's convention, on a multiprocessor platform, only the one and only boots
 ##Ex.3, 4 Per-CPU State and Initialization
 First part, setup per-CPU kernel stacks in `mem_init_mp()`, `kern/pmap.c`.
 
-* For CPU i, its kernel stack top is `KSTACKTOP - i * (KSTKSIZE + KSTKGAP)`
+* For CPU i, its kernel stack top is `KSTACKTOP - i * (KSTKSIZE + KSTKGAP)`  
+
+        for (i = 0; i < NCPU; i++)
+    		boot_map_region(kern_pgdir, KSTACKTOP - i * (KSTKSIZE + KSTKGAP) -KSTKSIZE,
+    			KSTKSIZE, PADDR(percpu_kstacks[i]), PTE_W);
+
 
 Second part, setup per-CPU TSS in `trap_init_percpu()`, `kern/trap.c`. 
 
@@ -29,12 +36,8 @@ Now when `jos` is started with `make qemu CPUS=4` it shows:
 
     6828 decimal is 15254 octal!
     Physical memory: 66556K available, base = 640K, extended = 65532K
-    check_page_alloc() succeeded!
-    check_page() succeeded!
-    check_kern_pgdir() succeeded!
-    check_page_installed_pgdir() succeeded!
+    ...
     SMP: CPU 0 found 4 CPU(s)
-    enabled interrupts: 1 2
     SMP: CPU 1 starting
     SMP: CPU 2 starting
     SMP: CPU 3 starting
@@ -42,12 +45,73 @@ Now when `jos` is started with `make qemu CPUS=4` it shows:
 
 ---
 ##Ex.5 Locking
-The _Big Kernel Lock_ is obtained at defined places, and release just before the `asm volatile(...)` statement in `env_pop_tf`.
+The _Big Kernel Lock_ is obtained at defined places:
+
+* In `i386_init()` just before waking up other CPUs. This is to prevent other CPUs from acquiring the lock before bootstrap CPU finishes initialisation. This could happen earlier.
+* In `mp_main()`, where the APs are about to enter the scheduler for the first time.
+* In `trap()`, after user processes are trapped into kernel mode.
+
+Those 3 points all indicate the beginning of some _serious kernel work_, that operates sensitive data structures that need mutual-exclusion protection.
+
+BKL is released just before `env_pop_tf`.
 ###Q&A
 1. _Why do we still need separate kernel stacks for each CPU despite the 'Big Kernel Lock'?_
     * Because, when a interrupt occurs in user mode, the CPU will push `EIP`, `CS` etc. on stack by hardware, without acquiring a lock. In case another CPU is running in kernel mode, the shared stack will be corrupted.
   
 --- 
+##Challenge: Concurrency in Kernel
+The Linux Kernel, to support SMP, used _Big Kernel Lock_ to serialise, until version `2.6.39` in 2011. What we are doing here in `joe` is quite similar. The kernel acquires a giant lock to prevent all forms of concurrency, so no modification is necessary for any of the kernel data structures. Now, I will replace the _Big Kernel Lock_ mechanism with fine-grained locking that only lock little parts of the kernel, to embrace concurrency in kernel. It proved to be something actually _challenging_.
+
+First, consider which parts of the current kernel will fail when operated concurrently (copied from the hint provided by MIT), and how exactly:
+
+1. __Page Allocator__: `page_free_list` must be handled atomically. 
+    * Scenario 1A: kernel on CPU0 calls `page_alloc`, so does kernel on CPU1, CPU2 etc. They all believe `page_free_list` is not NULL, then took the first page on the list, then moved forward `page_free_list` by one. Now, they've allocated a page -- but they are holding the same page. Suppose `page_alloc`ed pages are inserted into different user processes, now those processes mystically shares a physical page they thought private.  
+    
+            if ((page = page_free_list) == NULL)
+    		    goto page_alloc_end;
+        	page_free_list = page_free_list->pp_link;
+	* Scenario 1B: kernel on CPU0 calls `page_decref` wanting to get rid of a page. This page's `pp_ref` is `1`, so it should be put back on the free list. `page_decref` is actually a `read-modify-(test)-and-write` process. Suppose CPU0 has not commited the change then kernel on CPU1 comes in and tries to map this very page to somewhere else, CPU1 believes `pp_ref` is still one so it proceeds with mapping, while CPU0 later puts the page on free list.
+	        
+	        if (-- pp->pp_ref == 0)
+	            ...
+	 * There exists plenty more horrible scenarios.
+2. __Console Driver__: The console driver (actually the CGA and Serial buffer) must be accessed one at a time.
+    * Scenario 2A: Two kernel instances both call `cprintf(...)` to deliver some information. Since `cprintf` outputs one character at a time, we might see two messages intermixed.
+    * Scenario 2B: Two kernel instances both call a series of `cons_getc()`. A complete sentence may be split into pieces when it hits those kernels' line buffers.
+    
+3. __Scheduler__: The scheduler considers the status of a process when deciding which one to run, it also posts modification on the status. Here's how it might fail.
+    * Scenario 3A: Two schedulers run at the same time. The first finds a process to load and run, but just before it could mark it `running`, the other scheduler picks the same process. Later this process may run simultaneously on two CPUs.
+    * Scenario 3B: The parent process calls `sys_destroy` to kill one of its child, just before the child is marked `dying` or `free`, a scheduler picks this child process to run. Sadly `env_destroy` continues to free memory of a running process.
+    * Scenario 3C: One process makes a system call. A scheduler managed to run the process before the completion of that system call.
+    * This part of the kernel could go terribly wrong.
+4. __IPC states__: When a process wants to receive a message, it may receive one and only one.
+    * Scenario 4A: One process calls `sys_ipc_recv`, the kernel marks it receivable. Then many other processes call `sys_ipc_try_send` to the receiving process. They all believe that process wants their message, so memory could be mapped again and again, while the message value may get overwritten many times.
+
+Apparently I'm not the first one to realise locks are used to lock __data__, not __code__. This is very important as such a tiny little kernel like `jos` may present very complicated code-paths, especially on multiple processors. We must focus on concurrency-sensitive data structures to avoid errors.
+
+From those scenarios above, we conclude that there are so many data structures that must be protected:
+
+1. `page_free_list`: since dereferencing a pointer and change it's value is quite difficult to be encapsulated as an atomic operation, I use a spin lock (`pm_lock`) to protect it. `pm_lock` is used in two places: `page_alloc()` and `page_free()`
+2. `pp_ref` of every physical page: `pp_ref` is declared as an atomic variable, I used `atomic_inc` and `atomic_dec_test` to operate on it.
+3. CGA buffer and Serial buffer: since we want calls to `cprintf` to be atomic (which means generally a sentence is not split into pieces), I used spin lock `cons_write_lock` inside `vprintfmt`. Note that `vprintfmt` is used in both kernel and user mode, only kernel mode requires locking (because user mode `cprintf` is buffered, and translates to kernel mode `vprintfmt`).
+4. Keyboard and Serial input: the provided test programs for this lab did not use much of the input utility, and locking the input driver will require an input line buffer, so I did not implement locking here.
+5. IPC states: IPC states are modified in two places, `sys_ipc_recv` and `sys_ipc_try_send`. Each user process has its own `env_ipc_lock`.
+6. All other states of every user process `envs`: To make life easier, I use one big spin lock to protect the whole `envs` array. Protected data structures include: environments free list, environment status etc. And one atomic variable is used for every process to indicate whether they are in middle of an system call. In `env_run`, we must wait until the system call is finished before giving CPU to it.
+
+It all seems rather straight forward after my explanation, but the debugging process was not an pleasing experience. 
+
+1. Operating Systems are generally considered un-debuggable, so `cprintf` is pretty much every thing you get. Running `jos` on `QEMU` that can talk to `GDB` is such a treasure, but still it's nothing like user space debugging. I really can't imagine how people are debugging the Linux kernel.
+2. Reproducibility is an serious issue when timer interrupts comes in randomly, and `QEMU`'s SMP is not so consistent.
+3. Concurrent programs are hard to debug, inheritedly.
+
+More on concurrency and synchronisation. For the sake of simplicity we used only spin locks (which are not recursive) and atomic variables (their implementation is strongly associated with architecture). And it's very nice that `jos`'s kernel is not preemptive. 
+
+__Important:__
+The `primes` and `pingpong` programs are perfect tests. Please do not be surprised with occasional warning messages coming out of the console, or very long periods of stall. The scheduler of `QEMU` isn't very stable. It sometimes prefers to run the CPU that is waiting for a lock, not the one that's holding the lock. And it seems that the emulated cache or memory is somehow inconsistent. Or maybe it's just my own fault.
+
+I consulted [Linux Cross Reference](http://lxr.free-electrons.com/) for implementation of atomic operations. And _Linux Kernel Development, 3rd edition by Robert Love_ for general synchronisation in OS kernels.
+
+---
 ##Ex.6 Round-Robin Scheduling
 Before making this part of the lab work nicely, I had to write a fake timer interrupt handler in `trap_dispatch()`. Somehow timer interrupts are enabled.
 
@@ -183,7 +247,7 @@ Now we move on to the COW mapping-transferring function `duppage()`:
 
 * For a virtual page that is originally mapped writable or copy-on-write, we map the page in both parent and child with COW permissions.
     * Why is it necessary to map in the parent those COW pages again?
-        * no idea
+        * no idea, not necessary according to my tests.
 * For a virtual page that is originally read-only, we map the page in the child read-only as well.
 * In case of any system call failure, `duppage()` will not panic but return the error code to the caller function.
 
@@ -252,10 +316,8 @@ Now all exercises are complete, moving on to testing:
         // fault upcall and print the "user fault va" message below if there is
         // none.  The remaining three checks can be combined into a single test.
 So in `page_fault_handler`, we must check both the existence and validity of user's page fault handler (using `user_mem_assert`) before other things, to make the grading script happy.
-2. `user/primes` not behaving correctly. Later I realised this was caused by a faulty `sys_ipc_try_send` that does not clear the receiver's `env_ipc_recving` flag after successfully transferring the message. When I fixed this, the maximum prime number `user/primes` calculated was `8147`, by the 5120th process, afterwards `fork` failed because the OS ran out of memory. 
+2. `user/primes` not behaving correctly. Later I realised this was caused by a faulty `sys_ipc_try_send` that does not clear the receiver's `env_ipc_recving` flag after successfully transferring the message. When I fixed this, the maximum prime number `user/primes` calculated was `8147`, by the final process, afterwards `fork` failed because the OS ran out of space for `Env`. 
 
 ---
 
-**Now All exercises of Lab4 are done, all tests passed.**
-
-**Challenges' solution will be appended later. Moving on to lab 5 first.**
+**Now All exercises of Lab4 are done, all tests passed. (auto-grade does not work on OS X, tested manually)**

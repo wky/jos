@@ -36,23 +36,19 @@ sched_yield(void)
 	idle = begin;
 	spin_lock(&env_lock);
 	while (idle != envs + NENV){
-		if (idle->env_status == ENV_RUNNABLE) goto sched_yield_run;
+		if (idle->env_status == ENV_RUNNABLE)
+			goto sched_yield_run;
 		idle ++;
 	}
 	idle = envs;
 	while (idle != begin){
-		if (idle->env_status == ENV_RUNNABLE) goto sched_yield_run;
+		if (idle->env_status == ENV_RUNNABLE)
+			goto sched_yield_run;
 		idle ++;
 	}
 	if (curenv && curenv->env_status == ENV_RUNNING) idle = curenv;
-	else { // sched_halt never returns
-		spin_unlock(&env_lock);
-		sched_halt();
-	}
+	else sched_halt();
 sched_yield_run:
-	if (idle->env_tf.tf_regs.reg_esi == SYS_ipc_recv && idle->env_tf.tf_regs.reg_eax == SYS_ipc_recv){
-		cprintf("caught in sched_yield!\n");
-	}
 	env_run(idle);
 }
 
@@ -62,8 +58,22 @@ sched_yield_run:
 void
 sched_halt(void)
 {
-	if (env_lock.locked && env_lock.cpu == thiscpu)
-		panic("cpu[%d] about to halt but still holding env_lock", cpunum());
+	int i;
+	// For debugging and testing purposes, if there are no runnable
+	// environments in the system, then drop into the kernel monitor.
+	/*
+	for (i = 0; i < NENV; i++) {
+			if ((envs[i].env_status == ENV_RUNNABLE ||
+				 envs[i].env_status == ENV_RUNNING ||
+				 envs[i].env_status == ENV_DYING))
+					break;
+	}
+	if (i == NENV) {
+			cprintf("No runnable environments in the system!\n");
+			while (1)
+					monitor(NULL);
+	}*/
+	spin_unlock(&env_lock);
 	// Mark that no environment is running on this CPU
 	curenv = NULL;
 	lcr3(PADDR(kern_pgdir));
@@ -71,11 +81,8 @@ sched_halt(void)
 	// Mark that this CPU is in the HALT state, so that when
 	// timer interupts come in, we know we should re-acquire the
 	// big kernel lock
+	// cprintf("cpu[%d] halted.\n", cpunum());
 	xchg(&thiscpu->cpu_status, CPU_HALTED);
-
-	// Release the big kernel lock as if we were "leaving" the kernel
-	// cprintf("CPU %d about to halt!\n", cpunum());
-	// unlock_kernel();
 
 	// Reset stack pointer, enable interrupts and then halt.
 	asm volatile (

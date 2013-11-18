@@ -160,8 +160,9 @@ sup {
 
 <p><strong>YANG Weikun 1100012442</strong></p>
 
-<p>All exercises finished on Thu 10th Oct 22:30 UTC+0800<br/>
-Code quoting is reduced, as I mentioned in lab2 report.</p>
+<p><em>UPDATE Mon 18th Nov:</em> Solved concurrency challenge using fine-grained locking</p>
+
+<p>All exercises finished on Thu 10th Oct 22:30 UTC+0800</p>
 
 <h2>Ex.1 Multiprocessor support</h2>
 
@@ -192,7 +193,12 @@ Code quoting is reduced, as I mentioned in lab2 report.</p>
 <p>First part, setup per-CPU kernel stacks in <code>mem_init_mp()</code>, <code>kern/pmap.c</code>.</p>
 
 <ul>
-<li>For CPU i, its kernel stack top is <code>KSTACKTOP - i * (KSTKSIZE + KSTKGAP)</code></li>
+<li><p>For CPU i, its kernel stack top is <code>KSTACKTOP - i * (KSTKSIZE + KSTKGAP)</code></p>
+
+<pre><code>  for (i = 0; i &lt; NCPU; i++)
+      boot_map_region(kern_pgdir, KSTACKTOP - i * (KSTKSIZE + KSTKGAP) -KSTKSIZE,
+          KSTKSIZE, PADDR(percpu_kstacks[i]), PTE_W);
+</code></pre></li>
 </ul>
 
 
@@ -207,12 +213,8 @@ Code quoting is reduced, as I mentioned in lab2 report.</p>
 
 <pre><code>6828 decimal is 15254 octal!
 Physical memory: 66556K available, base = 640K, extended = 65532K
-check_page_alloc() succeeded!
-check_page() succeeded!
-check_kern_pgdir() succeeded!
-check_page_installed_pgdir() succeeded!
+...
 SMP: CPU 0 found 4 CPU(s)
-enabled interrupts: 1 2
 SMP: CPU 1 starting
 SMP: CPU 2 starting
 SMP: CPU 3 starting
@@ -223,7 +225,18 @@ SMP: CPU 3 starting
 
 <h2>Ex.5 Locking</h2>
 
-<p>The <em>Big Kernel Lock</em> is obtained at defined places, and release just before the <code>asm volatile(...)</code> statement in <code>env_pop_tf</code>.</p>
+<p>The <em>Big Kernel Lock</em> is obtained at defined places:</p>
+
+<ul>
+<li>In <code>i386_init()</code> just before waking up other CPUs. This is to prevent other CPUs from acquiring the lock before bootstrap CPU finishes initialisation. This could happen earlier.</li>
+<li>In <code>mp_main()</code>, where the APs are about to enter the scheduler for the first time.</li>
+<li>In <code>trap()</code>, after user processes are trapped into kernel mode.</li>
+</ul>
+
+
+<p>Those 3 points all indicate the beginning of some <em>serious kernel work</em>, that operates sensitive data structures that need mutual-exclusion protection.</p>
+
+<p>BKL is released just before <code>env_pop_tf</code>.</p>
 
 <h3>Q&amp;A</h3>
 
@@ -236,6 +249,87 @@ SMP: CPU 3 starting
 </li>
 </ol>
 
+
+<hr />
+
+<h2>Challenge: Concurrency in Kernel</h2>
+
+<p>The Linux Kernel, to support SMP, used <em>Big Kernel Lock</em> to serialise, until version <code>2.6.39</code> in 2011. What we are doing here in <code>joe</code> is quite similar. The kernel acquires a giant lock to prevent all forms of concurrency, so no modification is necessary for any of the kernel data structures. Now, I will replace the <em>Big Kernel Lock</em> mechanism with fine-grained locking that only lock little parts of the kernel, to embrace concurrency in kernel. It proved to be something actually <em>challenging</em>.</p>
+
+<p>First, consider which parts of the current kernel will fail when operated concurrently (copied from the hint provided by MIT), and how exactly:</p>
+
+<ol>
+<li><strong>Page Allocator</strong>: <code>page_free_list</code> must be handled atomically.
+
+<ul>
+<li><p>Scenario 1A: kernel on CPU0 calls <code>page_alloc</code>, so does kernel on CPU1, CPU2 etc. They all believe <code>page_free_list</code> is not NULL, then took the first page on the list, then moved forward <code>page_free_list</code> by one. Now, they've allocated a page -- but they are holding the same page. Suppose <code>page_alloc</code>ed pages are inserted into different user processes, now those processes mystically shares a physical page they thought private.</p>
+
+<pre><code>  if ((page = page_free_list) == NULL)
+      goto page_alloc_end;
+  page_free_list = page_free_list-&gt;pp_link;
+</code></pre></li>
+<li><p>Scenario 1B: kernel on CPU0 calls <code>page_decref</code> wanting to get rid of a page. This page's <code>pp_ref</code> is <code>1</code>, so it should be put back on the free list. <code>page_decref</code> is actually a <code>read-modify-(test)-and-write</code> process. Suppose CPU0 has not commited the change then kernel on CPU1 comes in and tries to map this very page to somewhere else, CPU1 believes <code>pp_ref</code> is still one so it proceeds with mapping, while CPU0 later puts the page on free list.</p>
+
+<pre><code>  if (-- pp-&gt;pp_ref == 0)
+      ...
+</code></pre></li>
+<li>There exists plenty more horrible scenarios.</li>
+</ul>
+</li>
+<li><p><strong>Console Driver</strong>: The console driver (actually the CGA and Serial buffer) must be accessed one at a time.</p>
+
+<ul>
+<li>Scenario 2A: Two kernel instances both call <code>cprintf(...)</code> to deliver some information. Since <code>cprintf</code> outputs one character at a time, we might see two messages intermixed.</li>
+<li>Scenario 2B: Two kernel instances both call a series of <code>cons_getc()</code>. A complete sentence may be split into pieces when it hits those kernels' line buffers.</li>
+</ul>
+</li>
+<li><p><strong>Scheduler</strong>: The scheduler considers the status of a process when deciding which one to run, it also posts modification on the status. Here's how it might fail.</p>
+
+<ul>
+<li>Scenario 3A: Two schedulers run at the same time. The first finds a process to load and run, but just before it could mark it <code>running</code>, the other scheduler picks the same process. Later this process may run simultaneously on two CPUs.</li>
+<li>Scenario 3B: The parent process calls <code>sys_destroy</code> to kill one of its child, just before the child is marked <code>dying</code> or <code>free</code>, a scheduler picks this child process to run. Sadly <code>env_destroy</code> continues to free memory of a running process.</li>
+<li>Scenario 3C: One process makes a system call. A scheduler managed to run the process before the completion of that system call.</li>
+<li>This part of the kernel could go terribly wrong.</li>
+</ul>
+</li>
+<li><strong>IPC states</strong>: When a process wants to receive a message, it may receive one and only one.
+
+<ul>
+<li>Scenario 4A: One process calls <code>sys_ipc_recv</code>, the kernel marks it receivable. Then many other processes call <code>sys_ipc_try_send</code> to the receiving process. They all believe that process wants their message, so memory could be mapped again and again, while the message value may get overwritten many times.</li>
+</ul>
+</li>
+</ol>
+
+
+<p>Apparently I'm not the first one to realise locks are used to lock <strong>data</strong>, not <strong>code</strong>. This is very important as such a tiny little kernel like <code>jos</code> may present very complicated code-paths, especially on multiple processors. We must focus on concurrency-sensitive data structures to avoid errors.</p>
+
+<p>From those scenarios above, we conclude that there are so many data structures that must be protected:</p>
+
+<ol>
+<li><code>page_free_list</code>: since dereferencing a pointer and change it's value is quite difficult to be encapsulated as an atomic operation, I use a spin lock (<code>pm_lock</code>) to protect it. <code>pm_lock</code> is used in two places: <code>page_alloc()</code> and <code>page_free()</code></li>
+<li><code>pp_ref</code> of every physical page: <code>pp_ref</code> is declared as an atomic variable, I used <code>atomic_inc</code> and <code>atomic_dec_test</code> to operate on it.</li>
+<li>CGA buffer and Serial buffer: since we want calls to <code>cprintf</code> to be atomic (which means generally a sentence is not split into pieces), I used spin lock <code>cons_write_lock</code> inside <code>vprintfmt</code>. Note that <code>vprintfmt</code> is used in both kernel and user mode, only kernel mode requires locking (because user mode <code>cprintf</code> is buffered, and translates to kernel mode <code>vprintfmt</code>).</li>
+<li>Keyboard and Serial input: the provided test programs for this lab did not use much of the input utility, and locking the input driver will require an input line buffer, so I did not implement locking here.</li>
+<li>IPC states: IPC states are modified in two places, <code>sys_ipc_recv</code> and <code>sys_ipc_try_send</code>. Each user process has its own <code>env_ipc_lock</code>.</li>
+<li>All other states of every user process <code>envs</code>: To make life easier, I use one big spin lock to protect the whole <code>envs</code> array. Protected data structures include: environments free list, environment status etc. And one atomic variable is used for every process to indicate whether they are in middle of an system call. In <code>env_run</code>, we must wait until the system call is finished before giving CPU to it.</li>
+</ol>
+
+
+<p>It all seems rather straight forward after my explanation, but the debugging process was not an pleasing experience.</p>
+
+<ol>
+<li>Operating Systems are generally considered un-debuggable, so <code>cprintf</code> is pretty much every thing you get. Running <code>jos</code> on <code>QEMU</code> that can talk to <code>GDB</code> is such a treasure, but still it's nothing like user space debugging. I really can't imagine how people are debugging the Linux kernel.</li>
+<li>Reproducibility is an serious issue when timer interrupts comes in randomly, and <code>QEMU</code>'s SMP is not so consistent.</li>
+<li>Concurrent programs are hard to debug, inheritedly.</li>
+</ol>
+
+
+<p>More on concurrency and synchronisation. For the sake of simplicity we used only spin locks (which are not recursive) and atomic variables (their implementation is strongly associated with architecture). And it's very nice that <code>jos</code>'s kernel is not preemptive.</p>
+
+<p><strong>Important:</strong>
+The <code>primes</code> and <code>pingpong</code> programs are perfect tests. Please do not be surprised with occasional warning messages coming out of the console, or very long periods of stall. The scheduler of <code>QEMU</code> isn't very stable. It sometimes prefers to run the CPU that is waiting for a lock, not the one that's holding the lock. And it seems that the emulated cache or memory is somehow inconsistent. Or maybe it's just my own fault.</p>
+
+<p>I consulted <a href="http://lxr.free-electrons.com/">Linux Cross Reference</a> for implementation of atomic operations. And <em>Linux Kernel Development, 3rd edition by Robert Love</em> for general synchronisation in OS kernels.</p>
 
 <hr />
 
@@ -424,7 +518,7 @@ ret          // return to re-execute the instruction that faulted.
 <li>Why is it necessary to map in the parent those COW pages again?
 
 <ul>
-<li>no idea</li>
+<li>no idea, not necessary according to my tests.</li>
 </ul>
 </li>
 </ul>
@@ -522,14 +616,12 @@ No runnable environments in the system!
 </code></pre>
 
 <p>So in <code>page_fault_handler</code>, we must check both the existence and validity of user's page fault handler (using <code>user_mem_assert</code>) before other things, to make the grading script happy.</p></li>
-<li><code>user/primes</code> not behaving correctly. Later I realised this was caused by a faulty <code>sys_ipc_try_send</code> that does not clear the receiver's <code>env_ipc_recving</code> flag after successfully transferring the message. When I fixed this, the maximum prime number <code>user/primes</code> calculated was <code>8147</code>, by the 5120th process, afterwards <code>fork</code> failed because the OS ran out of memory.</li>
+<li><code>user/primes</code> not behaving correctly. Later I realised this was caused by a faulty <code>sys_ipc_try_send</code> that does not clear the receiver's <code>env_ipc_recving</code> flag after successfully transferring the message. When I fixed this, the maximum prime number <code>user/primes</code> calculated was <code>8147</code>, by the final process, afterwards <code>fork</code> failed because the OS ran out of space for <code>Env</code>.</li>
 </ol>
 
 
 <hr />
 
-<p><strong>Now All exercises of Lab4 are done, all tests passed.</strong></p>
-
-<p><strong>Challenges' solution will be appended later. Moving on to lab 5 first.</strong></p>
+<p><strong>Now All exercises of Lab4 are done, all tests passed. (auto-grade does not work on OS X, tested manually)</strong></p>
 </body>
 </html>

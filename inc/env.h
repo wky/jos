@@ -62,6 +62,7 @@ struct Env {
 	// Exception handling
 	void *env_pgfault_upcall;	// Page fault upcall entry point
 
+	uint32_t in_syscall; 
 	// Lab 4 IPC
 	struct spinlock env_ipc_lock; // to prevent concurrent access to ipc state
 	bool env_ipc_recving;		// Env is blocked receiving
