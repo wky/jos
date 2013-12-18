@@ -95,6 +95,7 @@ sys_exofork(void)
 	new_env->env_status = ENV_NOT_RUNNABLE;
 	new_env->env_tf = curenv->env_tf;
 	new_env->env_tf.tf_regs.reg_eax = 0;
+	append_env(thiscpu, new_env);
 	ret = new_env->env_id;
 sys_exofork_end:
 	spin_unlock(&env_lock);
@@ -143,16 +144,19 @@ sys_env_set_trapframe(envid_t envid, struct Trapframe *tf)
 	// LAB 5: Your code here.
 	// Remember to check whether the user has supplied us with a good
 	// address!
-	int ret;
+	if (user_mem_check(curenv, tf, sizeof(struct Trapframe), 0) < 0) return -E_INVAL;
+	int ret = 0;
 	struct Env *env;
+	// spin_lock(&env_lock);
 	if ((ret = envid2env(envid, &env, 1)) < 0)
-		return ret;
-	user_mem_assert(curenv, tf, sizeof(struct Trapframe), 0);
+		goto sys_env_set_tf_end;
 	memcpy(&(env->env_tf), tf, sizeof(struct Trapframe));
 	env->env_tf.tf_eflags |= FL_IF;
 	env->env_tf.tf_eflags &= ~FL_IOPL_MASK;
 	env->env_tf.tf_cs |= 3;
-	return 0;
+sys_env_set_tf_end:
+	// spin_unlock(&env_lock);
+	return ret;
 }
 
 // Set the page fault upcall for 'envid' by modifying the corresponding struct
@@ -169,12 +173,12 @@ sys_env_set_pgfault_upcall(envid_t envid, void *func)
 	// LAB 4: Your code here.
 	int ret = 0;
 	struct Env *env;
-	spin_lock(&env_lock);
+	// spin_lock(&env_lock);
 	if ((ret = envid2env(envid, &env, 1)) < 0)
 		goto sys_env_set_pgfault_upcall_end;
 	env->env_pgfault_upcall = func;
 sys_env_set_pgfault_upcall_end:
-	spin_unlock(&env_lock);
+	// spin_unlock(&env_lock);
 	return ret;
 }
 
@@ -211,7 +215,7 @@ sys_page_alloc(envid_t envid, void *va, int perm)
 		|| (perm & (PTE_U | PTE_P)) != (PTE_U | PTE_P)
 		|| (perm & ~PTE_SYSCALL))
 		return -E_INVAL;
-	spin_lock(&env_lock);
+	// spin_lock(&env_lock);
 	if ((ret = envid2env(envid, &env, 1)) < 0)
 		goto sys_page_alloc_end;
 	if ((pp = page_alloc(ALLOC_ZERO)) == NULL){
@@ -223,7 +227,7 @@ sys_page_alloc(envid_t envid, void *va, int perm)
 		ret = -E_NO_MEM;
 	}
 sys_page_alloc_end:
-	spin_unlock(&env_lock);
+	// spin_unlock(&env_lock);
 	return ret;
 }
 
@@ -265,7 +269,7 @@ sys_page_map(envid_t srcenvid, void *srcva,
 	struct Env *src_env, *des_env;
 	struct PageInfo *pp; 
 	pte_t *pte_ptr;
-	spin_lock(&env_lock);
+	// spin_lock(&env_lock);
 	if ((ret = envid2env(srcenvid, &src_env, 1)) < 0
 		|| (ret = envid2env(dstenvid, &des_env, 1)) < 0)
 		goto sys_page_map_end;
@@ -280,7 +284,7 @@ sys_page_map(envid_t srcenvid, void *srcva,
 	}
 	ret = page_insert(des_env->env_pgdir, pp, dstva, perm);
 sys_page_map_end:
-	spin_unlock(&env_lock);
+	// spin_unlock(&env_lock);
 	return ret;
 }
 
@@ -300,12 +304,12 @@ sys_page_unmap(envid_t envid, void *va)
 	struct Env *env;
 	if ((uintptr_t)va >= UTOP || (uintptr_t)va & (PGSIZE - 1) )
 		return -E_INVAL;
-	spin_lock(&env_lock);
+	// spin_lock(&env_lock);
 	if ((ret = envid2env(envid, &env, 1)) < 0)
 		goto sys_page_unmap_end;
 	page_remove(env->env_pgdir, va);
 sys_page_unmap_end:
-	spin_unlock(&env_lock);
+	// spin_unlock(&env_lock);
 	return ret;
 }
 
@@ -351,6 +355,7 @@ static int
 sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 {
 	// LAB 4: Your code here.
+	// cprintf("send from %x to %x, value %d\n", curenv->env_id, envid, value);
 	struct Env *env;
 	int ret = 0;
 	struct PageInfo *pp = NULL;
@@ -371,9 +376,12 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 		ret = -E_INVAL;
 		goto sys_ipc_try_send_end;
 	}
-	if (pp && (uintptr_t)env->env_ipc_dstva < UTOP
-		&& (ret = page_insert(env->env_pgdir, pp, env->env_ipc_dstva, perm)) < 0)
-		goto sys_ipc_try_send_end;
+	env->env_ipc_perm = 0;
+	if (pp && (uintptr_t)env->env_ipc_dstva < UTOP){
+		if ((ret = page_insert(env->env_pgdir, pp, env->env_ipc_dstva, perm)) < 0)
+			goto sys_ipc_try_send_end;
+		else env->env_ipc_perm = perm;
+	}
 	env->env_ipc_value = value;
 	env->env_ipc_from = curenv->env_id;
 	env->env_ipc_recving = 0;
@@ -407,6 +415,7 @@ sys_ipc_recv(void *dstva)
 	curenv->env_ipc_dstva = dstva;
 	curenv->env_status = ENV_NOT_RUNNABLE;
 	curenv->env_tf.tf_regs.reg_eax = 0;
+	// cprintf("env %x receiving on %x\n", curenv->env_id, dstva);
 	spin_unlock(&(curenv->env_ipc_lock));
 	return 0;
 }

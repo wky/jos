@@ -157,6 +157,8 @@ env_init_percpu(void)
 	// For good measure, clear the local descriptor table (LDT),
 	// since we don't use it.
 	lldt(0);
+	spin_initlock(&thiscpu->env_lock);
+	thiscpu->env_list = NULL;
 }
 
 //
@@ -413,6 +415,11 @@ env_create(uint8_t *binary, size_t size, enum EnvType type)
 	e->env_type = type;
 	if (type == ENV_TYPE_FS)
 		e->env_tf.tf_eflags |= FL_IOPL_3;
+	cprintf("env created [%x], type %d\n", e->env_id, type);
+	e->env_link = NULL;
+	if (thiscpu->env_list) thiscpu->env_list->env_link = e;
+	else thiscpu->env_list = e;
+	thiscpu->nenv ++;
 	spin_unlock(&env_lock);
 }
 
@@ -465,6 +472,11 @@ env_free(struct Env *e)
 	pa = PADDR(e->env_pgdir);
 	e->env_pgdir = 0;
 	page_decref(pa2page(pa));
+
+	int i = 0;
+	for (i = 0; i < ncpu; i++)
+		if (delete_env(cpus+i, e)) break;
+	if (i == ncpu) panic("nice.. env %x not on sny cpu\n", e->env_id);
 
 	// return the environment to the free list
 	e->env_status = ENV_FREE;
@@ -542,7 +554,7 @@ env_run(struct Env *e)
 	//	   registers and drop into user mode in the
 	//	   environment.
 	uint32_t val = *((volatile uint32_t *)&(e->in_syscall));
-	if (val >= 10000){
+	if (val){
 		cprintf("wtf.. syscall[%d] not finished for env[%x]\n", val-10000, e->env_id);
 	}
 	// Hint: This function loads the new environment's state from
@@ -565,7 +577,7 @@ env_run(struct Env *e)
 	// since in_syscall acts like a lock
 	// wait until syscall is finished.
 	while (*((volatile uint32_t *)&(e->in_syscall)));
-		asm volatile ("pause");
+		// asm volatile ("pause");
 	env_pop_tf(&(e->env_tf));
 }
 

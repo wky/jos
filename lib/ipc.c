@@ -50,6 +50,7 @@ ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)
 	while ((ret = sys_ipc_try_send(to_env, val, pg, perm)) 
 		== -E_IPC_NOT_RECV)
 		sys_yield();
+	// cprintf("sent from %x to %x, val:%d\n", thisenv->env_id, to_env, val&0xffff);
 	if (ret != 0)
 		panic("ipc_send: %e", ret);
 }

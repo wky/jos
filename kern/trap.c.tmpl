@@ -180,6 +180,7 @@ trap_dispatch(struct Trapframe *tf)
 		case T_PGFLT:
 		// currently those functions all drop to kernel monitor 
 		// which typically does not return.
+			// cprintf("pgflt:%x\n", curenv->env_id);
 			page_fault_handler(tf);
 			return;
 		case T_BRKPT:
@@ -189,6 +190,7 @@ trap_dispatch(struct Trapframe *tf)
 		// system call handling, 5 arguments are from saved registers
 		case T_SYSCALL:{
 			uint32_t syscallno = tf->tf_regs.reg_eax;
+			// cprintf("syscall:%x, %d\n", curenv->env_id, syscallno);
 			// cprintf("[%x] in syscall [%d] on cpu [%d] status[%d]\n", curenv->env_id, tf->tf_regs.reg_eax, cpunum(), curenv->env_status);
 			// use in_syscall to avoid running a env before syscall finishes
 			if (xchg(&curenv->in_syscall, syscallno+10000))
@@ -202,8 +204,8 @@ trap_dispatch(struct Trapframe *tf)
 		}
 		case IRQ_OFFSET + IRQ_TIMER:
 			lapic_eoi();
-			// if ((tf->tf_cs & 3) != 3)
-			// 	cprintf("cpu[%d] woke up.\n", cpunum());
+			// if ((tf->tf_cs & 3) != 3) cprintf("cpu[%d] woke up.\n", cpunum());
+			if (!cpunum()) balance_cnt ++;
 			sched_yield();
 		case IRQ_OFFSET + IRQ_KBD:
 			kbd_intr();

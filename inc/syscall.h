@@ -16,6 +16,7 @@ enum {
 	SYS_yield = 10,
 	SYS_ipc_try_send = 11,
 	SYS_ipc_recv = 12,
+	SYS_env_set_trapframe = 13,
 	NSYSCALLS
 };
 
