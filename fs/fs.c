@@ -43,6 +43,42 @@ fs_init(void)
 	check_super();
 }
 
+int 
+alloc_blk()
+{
+	uint32_t *bitmap = diskaddr(2);
+	int i, j, first = 0;
+	for (i = 0; i < super->s_nblocks / 32; i++)
+		for (j = 0; j < 32 && j + i*32 < super->s_nblocks; j++)
+			if ((bitmap[i] & (1<<j)) != 0){
+				bitmap[i] &= ~(1<<j);
+				first = i *32 + j;
+				break;
+			}
+	if (first == 0) return -E_NO_DISK;
+	block_write_back((i * 32 + j)/8/BLKSIZE + 2);
+	return first;
+}
+
+void
+free_blk(uint32_t blk)
+{
+	if (blk > super->s_nblocks || blk < (super->s_nblocks / 8 + BLKSIZE - 1)/BLKSIZE + 2)
+		return;
+	((uint32_t *)diskaddr(2)) [blk/32] |= 1<<(blk%32);
+	block_write_back(blk/8/BLKSIZE + 2);
+}
+
+void
+block_write_back(uint32_t blk)
+{
+	char *addr = diskaddr(blk);
+	int t;
+	if ((uvpd[PDX(addr)] & PTE_P) && (uvpt[PGNUM(addr)] & PTE_P)){
+		if ((uvpt[PGNUM(addr)] & PTE_D)) ide_write(blk * BLKSECTS, addr, BLKSECTS);
+		if (blk != 1) sys_page_unmap(0, addr); // never unmap superblock
+	}
+}
 // Find the disk block number slot for the 'filebno'th block in file 'f'.
 // Set '*ppdiskbno' to point to that slot.
 // The slot will be one of the f->f_direct[] entries,
@@ -70,12 +106,13 @@ file_block_walk(struct File *f, uint32_t filebno, uint32_t **ppdiskbno, bool all
 		ptr = &f->f_direct[filebno];
 	else if (filebno < NDIRECT + NINDIRECT) {
 		if (f->f_indirect == 0) {
-			return -E_NOT_FOUND;
+			if (alloc){
+				if ((r = alloc_blk()) < 0) return r;
+				f->f_indirect = r;
+			} else return -E_NOT_FOUND;
 		}
 		ptr = (uint32_t*)diskaddr(f->f_indirect) + filebno - NDIRECT;
-	} else
-		return -E_INVAL;
-
+	} else return -E_INVAL;
 	*ppdiskbno = ptr;
 	return 0;
 }
@@ -96,7 +133,8 @@ file_get_block(struct File *f, uint32_t filebno, char **blk)
 	if ((r = file_block_walk(f, filebno, &ptr, 1)) < 0)
 		return r;
 	if (*ptr == 0) {
-		return -E_NOT_FOUND;
+		if ((r = alloc_blk()) < 0) return r;
+		*ptr = r;
 	}
 	*blk = diskaddr(*ptr);
 	return 0;
@@ -203,6 +241,47 @@ walk_path(const char *path, struct File **pdir, struct File **pf, char *lastelem
 // --------------------------------------------------------------
 
 
+int
+file_create(const char *path, struct File **f)
+{
+	struct File *dir;
+	char name[MAXNAMELEN];
+	int r = walk_path(path, &dir, f, name);
+	if (r != -E_NOT_FOUND){
+		return -E_FILE_EXISTS;
+	}
+	if (name[0] == '/') return -E_NOT_FOUND;
+	
+	struct File *entries;
+	assert(dir->f_size && (dir->f_size % BLKSIZE) == 0);
+	uint32_t nblock = (dir->f_size / BLKSIZE);
+	if ((r = file_get_block(dir, nblock-1, (char **)(&entries))) < 0) return r;
+	int i = 0;
+	while (i < BLKFILES && entries[i].f_size > 0) i++; // find an empty entry in this directory
+	if (i == BLKFILES){ // alloc a new block if can't find any
+		i = 0;
+		dir->f_size += BLKSIZE;
+		if ((r = file_get_block(dir, nblock, (char **)f)) < 0) return r;
+	}else *f = entries+i;
+
+	i = 0;
+	while (i < MAXNAMELEN && name[i]) i++;
+
+	if (name[i-1] == '/'){ // create dir
+		cprintf("create dir:%s\n", name);
+		name[i-1] = '\0';
+		strcpy((*f)->f_name, name);
+		(*f)->f_size = BLKSIZE;
+		char *__x;
+		if ((r = file_get_block(*f, 0, &__x)) < 0) return r;
+	}else{// create file
+		cprintf("create file:%s\n", name);
+		strcpy((*f)->f_name, name);
+		(*f)->f_size = 0;
+	}
+	return 0;
+}
+
 // Open "path".  On success set *pf to point at the file and return 0.
 // On error return < 0.
 int
@@ -234,9 +313,71 @@ file_read(struct File *f, void *buf, size_t count, off_t offset)
 		pos += bn;
 		buf += bn;
 	}
-
 	return count;
 }
 
+int
+file_write(struct File *f, const void *buf, size_t count, off_t offset)
+{
+	int r, bn;
+	off_t pos;
+	char *blk, *ptr = (char *)buf;
+	if (offset > f->f_size) return -E_NOT_SUPP; // writing past eof
+	for (pos = offset; pos < offset + count; ) {
+		if ((r = file_get_block(f, pos / BLKSIZE, &blk)) < 0) return r;
+		bn = MIN(BLKSIZE - pos % BLKSIZE, offset + count - pos);
+		memmove(blk + pos % BLKSIZE, ptr, bn);
+		pos += bn;
+		ptr += bn;
+	}
+	if (offset + count > f->f_size)
+		f->f_size = offset + count;
+	return count;
+}
 
+int
+file_set_size(struct File *f, off_t newsize)
+{
+	int blk, r;
+	uint32_t *blkptr;
+	for (blk = (newsize + BLKSIZE - 1)/BLKSIZE; blk < (f->f_size + BLKSIZE -1)/BLKSIZE; blk++){
+		if ((r = file_block_walk(f, blk, &blkptr, 0)) < 0) return r;
+		// delete this blk
+		if (*blkptr != 0) free_blk(*blkptr);
+	}
+	for (blk = (f->f_size + BLKSIZE -1)/BLKSIZE; blk < (newsize + BLKSIZE - 1)/BLKSIZE; blk++){
+		if ((r = file_block_walk(f, blk, &blkptr, 1)) < 0
+			|| (r = alloc_blk()) < 0)
+			return r;
+		*blkptr = r;
+	}
+	f->f_size = newsize;
+	return newsize;
+}
 
+void
+file_flush(struct File *f)
+{
+	block_write_back(((uint32_t)f - DISKMAP)/BLKSIZE);
+	int r, blk;
+	uint32_t *ptr;
+	for (blk = 0; blk < (f->f_size + BLKSIZE - 1)/BLKSIZE; blk ++){
+		file_block_walk(f, blk, &ptr, 0);
+		block_write_back(*ptr);
+	}
+}
+
+int
+file_remove(const char *path)
+{
+	// TODO remove
+	return -E_NOT_SUPP;
+}
+
+void
+fs_sync(void)
+{
+	int blk;
+	for (blk = 0; blk < super->s_nblocks; blk ++)
+		block_write_back(blk);
+}

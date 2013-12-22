@@ -194,6 +194,63 @@ sup {
 
 <hr />
 
+<h2>Challenge: File system with write access</h2>
+
+<h3>JOS filesystem overview</h3>
+
+<ol>
+<li><strong>File Operations</strong>(for user programs) <code>open</code>, <code>close</code>, <code>seek</code>, <code>read</code>, <code>write</code>, <code>stat</code> and other functions are visible to user programs, to accomplish file operations using <code>fd</code>(file descriptors). Most of those functions are delegates to device specific handlers. They are defined in <code>fd.c</code> and <code>file.c</code>. There are many other functions to manage a process's <code>fd</code>s.</li>
+<li><strong>Device Abstraction</strong> Files, Pipes, Consoles are the three devices in JOS. Each type of device has its own handlers for various operations. <code>devfile_read</code>, <code>devfile_write</code> etc. are handlers of File device (in <code>file.c</code>). Those functions invoke IPC to the file server.</li>
+<li><strong>IPC to File Server</strong> Upon receiving a request from a user process, the file server will interpret the requested job, dispatch the actually work to the next level. The file server is in <code>serv.c</code>.</li>
+<li><strong>File Operations</strong> This level will walk through directories to open a file, locate blocks for read/write. This part is in <code>fs.c</code></li>
+<li><strong>Block Cache</strong> The entire disk is cached in the file server: <code>[DISKMAP, DISKMAP+DISKSIZE)</code>. The file server will try the memory for read/write of blocks, the block cache will load blocks into memory when necessary. Write-back and eviction is added to enable a writable filesystem.</li>
+<li><strong>On Disk Structure</strong> On the disk, block 0 is the MBR. Block 1 is the superblock, containing the size of the disk and the root directory. starting from block 2 lies the bitmap, to keep track of allocated blocks and free blocks. Then comes blocks used for meta-data and contents of files.</li>
+<li><strong>IDE Driver</strong> The driver issues IDE commands to read/write physical blocks.</li>
+</ol>
+
+
+<h3>Changes made to support writable filesystem.</h3>
+
+<ol>
+<li><strong>Device level operations</strong> handlers for write and truncate are added (<code>devfile_write</code> and <code>devfile_trunc</code>), both are simple wrappers of corresponding filesystem IPC calls.</li>
+<li><strong>File Server</strong> the file server now may <code>open</code> a file with <code>O_CREAT</code>, <code>O_TRUNC</code>, <code>O_WRONLY</code> and <code>O_RDWR</code> options. All FS requests are handled appropriately.</li>
+<li><strong>File Operations</strong> in <code>fs.c</code>:
+
+<ul>
+<li><code>alloc_blk</code>: find a free block in the bitmap</li>
+<li><code>free_blk</code>: free a disk block</li>
+<li><code>block_write_back</code>: write back changes to disk (if any), and un-map the corresponding memory page to release memory(the superblock is never unmapped).</li>
+<li><code>file_block_walk</code>: find the pointer to the disk block that holds contents of a block in file. may allocate an indirect block if asked.</li>
+<li><code>file_get_block</code>: find the actually disk block of a file, allocate one if none exists.</li>
+<li><code>file_create</code>: create a new file or directory. allocate a new directory entry and create a file.</li>
+<li><code>file_write</code>: write contents of buffer to appropriate location in file. File size may grow if writing past EOF.</li>
+<li><code>file_set_size</code>: truncate (delete content blocks) or extend (allocate content blocks) the size of a file.</li>
+<li><code>file_flush</code>: commit all changes on a file to disk.</li>
+<li><code>fs_sync</code>: commit all changes on the filesystem to disk.</li>
+</ul>
+</li>
+<li><strong>Block Cache</strong> when the block cache is out-of-memory, the file server will call <code>fs_sync</code> to free memory.</li>
+</ol>
+
+
+<h3>Results</h3>
+
+<p>The filesystem in JOS is now able to create new files and directories, write data to files, truncate or extend a file. The simplest test would be:</p>
+
+<pre><code>$cat &gt; newfile  
+blah blah blah
+...
+
+$ls
+...
+newfile
+...
+
+$cat newfile
+blah blah blah
+...
+</code></pre>
+
 <h2>Ex.3 Spawning Processes</h2>
 
 <p>To implement a user mode <code>spawn</code> (equivalent to UNIX <code>fork + exec</code>), we must provide an interface for user programs to modify the trap frame of another user program, the system call <code>sys_env_set_trapframe</code>. In this system call, we first validate the pointer from user, then make sure that the modified trap frame has:</p>
@@ -224,6 +281,7 @@ sup {
 
 <ul>
 <li>A bit more than 3 hours (without doing the challenges). This seems the easiest lab in all 5.</li>
+<li>Writable filesystem challenge took some time. I had to understand the whole filesystem implementation, then make appropriate changes.</li>
 </ul>
 </li>
 <li><em>'Any suggestions?'</em>

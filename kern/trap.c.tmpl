@@ -352,7 +352,7 @@ page_fault_handler(struct Trapframe *tf)
 	if (tf->tf_esp > UXSTACKTOP - PGSIZE){
 		// check if about to overflow the excetion stack
 		if (tf->tf_esp - 4 * 6 - sizeof(struct PushRegs) <= UXSTACKTOP - PGSIZE){
-			cprintf("[%08x] user exception stack overflow!\n");
+			cprintf("[%08x] user exception stack overflow!\n", curenv->env_id);
 			env_destroy(curenv);
 			return;
 		}

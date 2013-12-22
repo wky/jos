@@ -123,19 +123,16 @@ serve_open(envid_t envid, struct Fsreq_open *req,
 		return r;
 	}
 	fileid = r;
-
-	if (req->req_omode != 0) {
-		if (debug)
-			cprintf("file_open omode 0x%x unsupported", req->req_omode);
-		return -E_INVAL;
-	}
-
 	if ((r = file_open(path, &f)) < 0) {
-		if (debug)
-			cprintf("file_open failed: %e", r);
-		return r;
+		if (r == -E_NOT_FOUND && (req->req_omode & O_CREAT)){
+			if ((r = file_create(path, &f)) < 0) return r;
+		} else return r;
+	}else if (req->req_omode & O_EXCL){
+		return -E_FILE_EXISTS;
 	}
-
+	if ((req->req_omode & O_TRUNC) && f->f_type == FTYPE_REG
+		&& (r = file_set_size(f, 0)) < 0)
+		return r;
 	// Save the file pointer
 	o->o_file = f;
 
@@ -156,6 +153,17 @@ serve_open(envid_t envid, struct Fsreq_open *req,
 	return 0;
 }
 
+
+int
+serve_set_size(envid_t envid, struct Fsreq_set_size *req)
+{
+	struct OpenFile *o;
+	int r;
+	if ((r = openfile_lookup(envid, req->req_fileid, &o)) < 0
+		|| (r = file_set_size(o->o_file, req->req_size)) < 0)
+		return r;
+	return req->req_size;
+}
 
 // Read at most ipc->read.req_n bytes from the current seek position
 // in ipc->read.req_fileid.  Return the bytes read from the file to
@@ -191,7 +199,18 @@ serve_read(envid_t envid, union Fsipc *ipc)
 	return r;
 }
 
-
+int
+serve_write(envid_t envid, struct Fsreq_write *req)
+{
+	struct OpenFile *o;
+	int r;
+	if ((r = openfile_lookup(envid, req->req_fileid, &o)) < 0)
+		return r;
+	if ((r = file_write(o->o_file, req->req_buf, req->req_n, o->o_fd->fd_offset))< 0 )
+		return r;
+	o->o_fd->fd_offset += r;
+	return r;
+}
 
 // Stat ipc->stat.req_fileid.  Return the file's struct Stat to the
 // caller in ipc->statRet.
@@ -220,17 +239,40 @@ serve_stat(envid_t envid, union Fsipc *ipc)
 int
 serve_flush(envid_t envid, struct Fsreq_flush *req)
 {
+	struct OpenFile *o;
+	int r;
+	if ((r = openfile_lookup(envid, req->req_fileid, &o)) < 0)
+		return r;
+	file_flush(o->o_file);
 	return 0;
 }
 
+int
+serve_remove(envid_t envid, struct Fsreq_remove *req)
+{
+	return file_remove(req->req_path);
+}
+
+
+int
+serve_sync(envid_t envid, union Fsipc *req)
+{
+	fs_sync();
+	return 0;
+}
 typedef int (*fshandler)(envid_t envid, union Fsipc *req);
 
 fshandler handlers[] = {
 	// Open is handled specially because it passes pages
 	/* [FSREQ_OPEN] =	(fshandler)serve_open, */
+	// TODO: handlers for FSREQ_WRITE FSREQ_REMOVE FSREQ_SYNC FSREQ_SET_SIZE
+	[FSREQ_SET_SIZE] = 	(fshandler)serve_set_size,
 	[FSREQ_READ] =		serve_read,
+	[FSREQ_WRITE] = 	(fshandler)serve_write,
 	[FSREQ_STAT] =		serve_stat,
 	[FSREQ_FLUSH] =		(fshandler)serve_flush,
+	[FSREQ_REMOVE] = 	(fshandler)serve_remove, 
+	[FSREQ_SYNC] = 		(fshandler)serve_sync,
 };
 #define NHANDLERS (sizeof(handlers)/sizeof(handlers[0]))
 

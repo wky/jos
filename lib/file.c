@@ -28,6 +28,7 @@ fsipc(unsigned type, void *dstva)
 	return ipc_recv(NULL, dstva, NULL);
 }
 
+
 static int devfile_flush(struct Fd *fd);
 static ssize_t devfile_read(struct Fd *fd, void *buf, size_t n);
 static ssize_t devfile_write(struct Fd *fd, const void *buf, size_t n);
@@ -39,8 +40,10 @@ struct Dev devfile =
 	.dev_id =	'f',
 	.dev_name =	"file",
 	.dev_read =	devfile_read,
-	.dev_close =	devfile_flush,
+	.dev_write = devfile_write,
+	.dev_close = devfile_flush,
 	.dev_stat =	devfile_stat,
+	.dev_trunc = devfile_trunc,
 };
 
 // Open a file (or directory).
@@ -125,6 +128,23 @@ devfile_read(struct Fd *fd, void *buf, size_t n)
 	return r;
 }
 
+static ssize_t
+devfile_write(struct Fd *fd, const void *buf, size_t n)
+{
+	fsipcbuf.write.req_fileid = fd->fd_file.id;
+	size_t unit = sizeof(fsipcbuf.write.req_buf);
+	void *p = (void*)buf;
+	int r = 0;
+	while (n){
+		fsipcbuf.write.req_n = unit > n? n:unit;
+		memmove(fsipcbuf.write.req_buf, buf, fsipcbuf.write.req_n);
+		// r is bytes written
+		if ((r = fsipc(FSREQ_WRITE, NULL)) < 0) return r;
+		n -= r;
+		p += r;
+	}
+	return (ssize_t)(p - buf);
+}
 
 static int
 devfile_stat(struct Fd *fd, struct Stat *st)
@@ -138,6 +158,13 @@ devfile_stat(struct Fd *fd, struct Stat *st)
 	st->st_size = fsipcbuf.statRet.ret_size;
 	st->st_isdir = fsipcbuf.statRet.ret_isdir;
 	return 0;
+}
+
+static int devfile_trunc(struct Fd *fd, off_t newsize)
+{
+	fsipcbuf.set_size.req_fileid = fd->fd_file.id;
+	fsipcbuf.set_size.req_size = newsize;
+	return fsipc(FSREQ_SET_SIZE, NULL);
 }
 
 
